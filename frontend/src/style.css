@@ -1,0 +1,353 @@
+/* frontend/src/style.css */
+
+/* Modern Stylish Responsive CSS for Face Recognition Attendance */
+
+/* Reset and base */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+:root {
+  --primary-purple: #6c63ff;
+  --primary-rose: #ff7eb6;
+  --primary-indigo: #4b47ff;
+  --primary-emerald: #2dd4bf;
+  --surface: #fff;
+  --surface-muted: #f8f4ff;
+  --border: rgba(76, 29, 149, 0.2);
+  --text-primary: #1c1c1c;
+  --text-muted: #4c4a63;
+  --shadow-soft: 0 20px 45px rgba(76, 29, 149, 0.18);
+  --shadow-tone: 0 8px 25px rgba(76, 29, 149, 0.15);
+}
+
+body {
+  margin: 0;
+  font-family: "Inter", "Segoe UI", system-ui, sans-serif;
+  background: linear-gradient(135deg, #2c3e50, #4c1d95 65%);
+  color: var(--text-primary);
+  line-height: 1.6;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Main app container */
+.app {
+  max-width: 1040px;
+  margin: 2.5rem auto 3rem;
+  padding: 2.5rem 3rem;
+  background: var(--surface);
+  border-radius: 28px;
+  box-shadow: var(--shadow-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.app::before,
+.app::after {
+  content: "";
+  position: absolute;
+  width: 200px;
+  height: 200px;
+  border-radius: 50%;
+  filter: blur(40px);
+  opacity: 0.6;
+  z-index: 0;
+}
+
+.app::before {
+  background: var(--primary-rose);
+  top: -50px;
+  right: -20px;
+}
+
+.app::after {
+  background: var(--primary-emerald);
+  bottom: -40px;
+  left: -20px;
+}
+
+.app > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* Typography */
+h1,
+h2,
+h3 {
+  margin: 0;
+  color: #201a2b;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+
+h1 {
+  font-size: clamp(2.25rem, 3vw, 3rem);
+}
+
+h2 {
+  font-size: clamp(1.75rem, 2.3vw, 2.2rem);
+}
+
+h3 {
+  font-size: clamp(1.3rem, 1.6vw, 1.5rem);
+}
+
+/* Header */
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+header h1 {
+  font-size: clamp(1.8rem, 2.4vw, 2.6rem);
+}
+
+nav {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+nav a,
+nav button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  text-decoration: none;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 0.55rem 1.5rem;
+  border: none;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.3s ease;
+  position: relative;
+}
+
+nav a {
+  color: #fff;
+  background: linear-gradient(135deg, var(--primary-purple), var(--primary-indigo));
+  box-shadow: var(--shadow-tone);
+}
+
+nav button {
+  background: linear-gradient(135deg, var(--primary-rose), #fda085);
+  color: #fff;
+  box-shadow: var(--shadow-tone);
+}
+
+nav a:hover,
+nav button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 30px rgba(76, 29, 149, 0.35);
+}
+
+/* Section card */
+section {
+  background: var(--surface-muted);
+  border-radius: 20px;
+  padding: 2rem;
+  box-shadow: var(--shadow-tone);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+section:nth-child(even) {
+  background: white;
+}
+
+section h3 {
+  color: var(--text-primary);
+}
+
+/* Forms */
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  border: none;
+}
+
+form input[type="text"],
+form input[type="email"],
+form input[type="password"],
+form input[type="file"],
+form select,
+form textarea {
+  width: 100%;
+  padding: 0.9rem 1.2rem;
+  border-radius: 14px;
+  border: 1px solid rgba(76, 29, 149, 0.15);
+  background: #fff;
+  font-size: 1rem;
+  font-weight: 500;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  color: #2e2e3a;
+  font-family: inherit;
+}
+
+form input:focus,
+form select:focus,
+form textarea:focus {
+  outline: none;
+  border-color: var(--primary-indigo);
+  box-shadow: 0 0 0 4px rgba(76, 29, 149, 0.1);
+}
+
+form textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+
+/* Button styles */
+button,
+form button {
+  border: none;
+  border-radius: 16px;
+  padding: 0.85rem 1.6rem;
+  font-size: 1rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  background: linear-gradient(135deg, #ff7eb6, #785ef0);
+  color: #fff;
+  box-shadow: 0 10px 25px rgba(121, 81, 197, 0.25);
+}
+
+button:hover,
+form button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 30px rgba(121, 81, 197, 0.35);
+}
+
+button:disabled,
+form button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Flex layout forms */
+.flex-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: center;
+}
+
+.flex-form > * {
+  flex: 1 1 180px;
+}
+
+/* List cards */
+ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+ul li {
+  padding: 0.85rem 1rem;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #f6f6fc, #fef9ff);
+  border: 1px solid rgba(76, 29, 149, 0.1);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--text-muted);
+  font-weight: 600;
+  box-shadow: inset 0 -1px 0 rgba(76, 29, 149, 0.05);
+}
+
+ul li button {
+  padding: 0.35rem 0.9rem;
+  border-radius: 999px;
+  font-size: 0.9rem;
+  background: #fff;
+  color: #d90429;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+
+ul li button:hover {
+  transform: translateY(-1px);
+}
+
+/* Status messages */
+.status {
+  font-weight: 700;
+  padding: 0.75rem 1rem;
+  border-radius: 12px;
+  background: rgba(45, 212, 191, 0.15);
+  color: #047857;
+  border: 1px solid rgba(45, 212, 191, 0.35);
+}
+
+/* Error text */
+.error {
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+/* Video and canvas */
+video {
+  border-radius: 20px;
+  border: 3px solid #7c3aed;
+  width: 100%;
+  max-width: 520px;
+  display: block;
+  margin: 0 auto 1rem;
+  box-shadow: 0 15px 45px rgba(76, 29, 149, 0.35);
+  object-fit: cover;
+}
+
+/* Responsive */
+@media (max-width: 900px) {
+  .app {
+    padding: 2rem;
+  }
+
+  section {
+    padding: 1.5rem;
+  }
+
+  form button {
+    width: 100%;
+  }
+}
+
+@media (max-width: 640px) {
+  .app {
+    margin: 1.2rem;
+    padding: 1.5rem;
+  }
+
+  nav {
+    justify-content: center;
+  }
+
+  .flex-form {
+    flex-direction: column;
+  }
+
+  header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
