@@ -220,6 +220,8 @@ def edit_attendance(
     if not record:
         raise HTTPException(status_code=404, detail="Attendance not found")
     session = _get_session(record.session_id, db)
+    if session.status == "submitted":
+        raise HTTPException(status_code=400, detail="Cannot edit attendance for a submitted session")
     if current_user.role == "teacher":
         _ensure_teacher_session(session, current_user.id)
     elif current_user.role != "admin":

@@ -33,6 +33,7 @@ export const adminService = {
 export const courseService = {
     create: (payload) => api.post("/courses", payload).then((res) => res.data),
     list: () => api.get("/courses").then((res) => res.data),
+    delete: (id) => api.delete(`/courses/${id}`).then((res) => res.data),
     assignStudent: (payload) => api.post("/courses/assign-student", payload).then((res) => res.data),
     assignTeacher: (payload) => api.post("/courses/assign-teacher", payload).then((res) => res.data),
 };

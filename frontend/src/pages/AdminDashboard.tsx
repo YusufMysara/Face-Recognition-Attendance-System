@@ -425,6 +425,20 @@ const AdminDashboard = () => {
           ))}
         </ul>
       </section>
+
+      <section>
+        <h3>Courses</h3>
+        <ul>
+          {courses.map((course) => (
+            <li key={course.id}>
+              {course.name} - {course.description}
+              <button onClick={() => courseService.delete(course.id).then(fetchCourses)}>
+                Delete
+              </button>
+            </li>
+          ))}
+        </ul>
+      </section>
     </div>
   );
 };

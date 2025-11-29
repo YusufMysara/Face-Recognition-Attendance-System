@@ -50,6 +50,7 @@ export const courseService = {
   create: (payload: { name: string; description: string; teacher_id: number }) =>
     api.post("/courses", payload).then((res) => res.data),
   list: () => api.get("/courses").then((res) => res.data),
+  delete: (id: number) => api.delete(`/courses/${id}`).then((res) => res.data),
   assignStudent: (payload: { student_id: number; course_id: number }) =>
     api.post("/courses/assign-student", payload).then((res) => res.data),
   assignTeacher: (payload: { teacher_id: number; course_id: number }) =>

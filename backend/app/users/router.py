@@ -6,7 +6,13 @@ from sqlalchemy.orm import Session
 
 from app.auth.dependencies import require_role
 from app.database import get_db
-from app.models import User
+from app.models import (
+    Attendance,
+    Course,
+    Session as SessionModel,
+    StudentCourse,
+    User,
+)
 from app.schemas.user import (
     PasswordResetRequest,
     UserCreate,
@@ -88,6 +94,38 @@ def delete_user(
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    if user.role == "student":
+        (
+            db.query(Attendance)
+            .filter(Attendance.student_id == user_id)
+            .delete(synchronize_session=False)
+        )
+        (
+            db.query(StudentCourse)
+            .filter(StudentCourse.student_id == user_id)
+            .delete(synchronize_session=False)
+        )
+    elif user.role == "teacher":
+        session_ids_subq = (
+            db.query(SessionModel.id).filter(SessionModel.teacher_id == user_id)
+        ).subquery()
+        if session_ids_subq is not None:
+            (
+                db.query(Attendance)
+                .filter(Attendance.session_id.in_(session_ids_subq))
+                .delete(synchronize_session=False)
+            )
+        (
+            db.query(SessionModel)
+            .filter(SessionModel.teacher_id == user_id)
+            .delete(synchronize_session=False)
+        )
+        (
+            db.query(Course)
+            .filter(Course.teacher_id == user_id)
+            .update({Course.teacher_id: None}, synchronize_session=False)
+        )
+
     db.delete(user)
     db.commit()
     return {"detail": "User deleted"}

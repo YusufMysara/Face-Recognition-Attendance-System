@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.dependencies import get_current_user, require_role
 from app.database import get_db
-from app.models import Course, StudentCourse, User
+from app.models import Attendance, Course, Session as SessionModel, StudentCourse, User
 from app.schemas.course import (
     CourseAssignment,
     CourseCreate,
@@ -106,6 +106,36 @@ def delete_course(
     course = db.query(Course).filter(Course.id == course_id).first()
     if not course:
         raise HTTPException(status_code=404, detail="Course not found")
+    
+    # Get all session IDs for this course
+    session_ids = (
+        db.query(SessionModel.id).filter(SessionModel.course_id == course_id).all()
+    )
+    session_id_list = [sid[0] for sid in session_ids]
+    
+    # Delete all attendance records for sessions in this course
+    if session_id_list:
+        (
+            db.query(Attendance)
+            .filter(Attendance.session_id.in_(session_id_list))
+            .delete(synchronize_session=False)
+        )
+    
+    # Delete all sessions for this course
+    (
+        db.query(SessionModel)
+        .filter(SessionModel.course_id == course_id)
+        .delete(synchronize_session=False)
+    )
+    
+    # Delete all student-course relationships
+    (
+        db.query(StudentCourse)
+        .filter(StudentCourse.course_id == course_id)
+        .delete(synchronize_session=False)
+    )
+    
+    # Delete the course
     db.delete(course)
     db.commit()
     return {"detail": "Course deleted"}

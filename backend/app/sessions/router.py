@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.dependencies import get_current_user, require_role
 from app.database import get_db
-from app.models import Course, Session as SessionModel, User
+from app.models import Attendance, Course, Session as SessionModel, StudentCourse, User
 from app.schemas.session import SessionCreate, SessionResponse
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
@@ -53,6 +53,8 @@ def end_session(
         raise HTTPException(status_code=404, detail="Session not found")
     if session.teacher_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not your session")
+    if session.status == "submitted":
+        raise HTTPException(status_code=400, detail="Cannot end a submitted session")
     session.status = "closed"
     session.ended_at = datetime.utcnow()
     db.commit()
@@ -71,6 +73,33 @@ def submit_session(
         raise HTTPException(status_code=404, detail="Session not found")
     if session.teacher_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not your session")
+    
+    # Get all enrolled students for this course
+    enrolled_students = (
+        db.query(StudentCourse)
+        .filter(StudentCourse.course_id == session.course_id)
+        .all()
+    )
+    enrolled_student_ids = {sc.student_id for sc in enrolled_students}
+    
+    # Get all existing attendance records for this session
+    existing_attendance = (
+        db.query(Attendance)
+        .filter(Attendance.session_id == session_id)
+        .all()
+    )
+    existing_student_ids = {att.student_id for att in existing_attendance}
+    
+    # Create absent records for students who don't have attendance records
+    missing_student_ids = enrolled_student_ids - existing_student_ids
+    for student_id in missing_student_ids:
+        absent_record = Attendance(
+            session_id=session_id,
+            student_id=student_id,
+            status="absent",
+        )
+        db.add(absent_record)
+    
     session.status = "submitted"
     session.ended_at = session.ended_at or datetime.utcnow()
     db.commit()
@@ -89,6 +118,13 @@ def delete_session(
         raise HTTPException(status_code=404, detail="Session not found")
     if session.teacher_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not your session")
+    if session.status == "submitted":
+        raise HTTPException(status_code=400, detail="Cannot delete a submitted session")
+    (
+        db.query(Attendance)
+        .filter(Attendance.session_id == session_id)
+        .delete(synchronize_session=False)
+    )
     db.delete(session)
     db.commit()
     return {"detail": "Session deleted"}
