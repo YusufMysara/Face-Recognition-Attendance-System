@@ -1,67 +1,78 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
+import { authApi } from "@/lib/api";
 
-type UserRole = "admin" | "teacher" | "student";
-
-export interface AuthUser {
+interface User {
   id: number;
   name: string;
   email: string;
-  role: UserRole;
-  group?: string | null;
+  role: "admin" | "teacher" | "student";
+  group?: string;
 }
 
-interface AuthContextValue {
-  user: AuthUser | null;
-  token: string | null;
-  login: (payload: { user: AuthUser; token: string }) => void;
+interface AuthContextType {
+  user: User | null;
+  loading: boolean;
+  login: (email: string, password: string) => Promise<void>;
   logout: () => void;
+  isAuthenticated: boolean;
 }
 
-const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [token, setToken] = useState<string | null>(null);
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
   useEffect(() => {
-    const storedToken = localStorage.getItem("token");
-    const storedUser = localStorage.getItem("user");
-    if (storedToken && storedUser) {
-      setToken(storedToken);
-      setUser(JSON.parse(storedUser));
+    // Check if user is already logged in
+    const storedUser = authApi.getCurrentUser();
+    if (storedUser) {
+      setUser(storedUser);
     }
+    setLoading(false);
   }, []);
 
-  const login = (payload: { user: AuthUser; token: string }) => {
-    setUser(payload.user);
-    setToken(payload.token);
-    localStorage.setItem("token", payload.token);
-    localStorage.setItem("user", JSON.stringify(payload.user));
-    navigate("/");
+  const login = async (email: string, password: string) => {
+    try {
+      const response = await authApi.login(email, password);
+      setUser(response.user);
+      // Navigate based on role
+      const role = response.user.role.toLowerCase();
+      navigate(`/${role}/dashboard`);
+    } catch (error: any) {
+      throw error;
+    }
   };
 
   const logout = () => {
+    authApi.logout();
     setUser(null);
-    setToken(null);
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
     navigate("/login");
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, login, logout }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        loading,
+        login,
+        logout,
+        isAuthenticated: !!user,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );
-};
+}
 
-export const useAuthContext = () => {
-  const ctx = useContext(AuthContext);
-  if (!ctx) {
-    throw new Error("useAuth must be used within AuthProvider");
+export function useAuth() {
+  const context = useContext(AuthContext);
+  if (context === undefined) {
+    throw new Error("useAuth must be used within an AuthProvider");
   }
-  return ctx;
-};
+  return context;
+}
+
 
