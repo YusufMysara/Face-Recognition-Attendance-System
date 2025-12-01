@@ -144,7 +144,6 @@ export default function CourseDetails() {
               setSelectedSessionId(row.id);
               setShowDeleteModal(true);
             }}
-            disabled={row.status === "open"}
           >
             <Trash2 className="w-4 h-4 text-destructive" />
           </Button>
