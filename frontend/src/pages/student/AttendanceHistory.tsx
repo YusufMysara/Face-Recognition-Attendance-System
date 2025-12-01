@@ -1,36 +1,100 @@
+import { useState, useEffect } from "react";
 import { DataTable, Column } from "@/components/shared/DataTable";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Loader2 } from "lucide-react";
+import { attendanceApi, handleApiError } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
+import { toast } from "sonner";
 
 interface AttendanceRecord {
-  id: string;
-  course: string;
-  date: string;
-  time: string;
-  status: string;
+  id: number;
+  session_id: number;
+  course_id: number;
+  status: "present" | "absent";
+  marked_at: string;
+  course_name?: string;
 }
 
 export default function AttendanceHistory() {
-  const records: AttendanceRecord[] = [
-    { id: "1", course: "CS101", date: "2024-03-20", time: "09:00 AM", status: "Present" },
-    { id: "2", course: "MATH201", date: "2024-03-19", time: "11:00 AM", status: "Present" },
-    { id: "3", course: "PHY101", date: "2024-03-18", time: "02:00 PM", status: "Absent" },
-    { id: "4", course: "ENG201", date: "2024-03-17", time: "10:00 AM", status: "Present" },
-    { id: "5", course: "HIST101", date: "2024-03-16", time: "03:00 PM", status: "Present" },
-  ];
+  const { user } = useAuth();
+  const [records, setRecords] = useState<AttendanceRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Load attendance history on mount
+  useEffect(() => {
+    if (user) {
+      loadAttendanceHistory();
+    }
+  }, [user]);
+
+  const loadAttendanceHistory = async () => {
+    if (!user) return;
+
+    try {
+      setLoading(true);
+      setError(null);
+      const data = await attendanceApi.getStudentAttendance(user.id);
+      setRecords(data.history);
+    } catch (err) {
+      setError(handleApiError(err));
+      toast.error(handleApiError(err));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const columns: Column<AttendanceRecord>[] = [
-    { header: "Course", accessor: "course" },
-    { header: "Date", accessor: "date" },
-    { header: "Time", accessor: "time" },
+    {
+      header: "Course",
+      accessor: (row) => row.course_name || `Course ${row.course_id}`
+    },
+    {
+      header: "Date",
+      accessor: (row) => new Date(row.marked_at).toLocaleDateString()
+    },
+    {
+      header: "Time",
+      accessor: (row) => new Date(row.marked_at).toLocaleTimeString()
+    },
     {
       header: "Status",
       accessor: (row) => (
-        <Badge variant={row.status === "Present" ? "default" : "destructive"}>
-          {row.status}
+        <Badge variant={row.status === "present" ? "default" : "destructive"}>
+          {row.status === "present" ? "Present" : "Absent"}
         </Badge>
       ),
     },
   ];
+
+  if (loading) {
+    return (
+      <div className="content-container">
+        <div className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+            <p className="text-muted-foreground">Loading attendance history...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="content-container">
+        <div className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <p className="text-destructive mb-4">{error}</p>
+            <Button onClick={loadAttendanceHistory} variant="outline">
+              Try Again
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="content-container">
@@ -39,7 +103,13 @@ export default function AttendanceHistory() {
         <p className="text-muted-foreground">Complete record of your attendance</p>
       </div>
 
-      <DataTable data={records} columns={columns} searchPlaceholder="Search history..." />
+      {records.length === 0 ? (
+        <div className="text-center py-12">
+          <p className="text-muted-foreground">No attendance records found</p>
+        </div>
+      ) : (
+        <DataTable data={records} columns={columns} searchPlaceholder="Search history..." />
+      )}
     </div>
   );
 }

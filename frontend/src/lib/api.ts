@@ -251,10 +251,34 @@ export const coursesApi = {
     if (!response.ok) throw new Error("Failed to fetch sessions");
     return response.json();
   },
+
+  getCourseStudents: async (courseId: number) => {
+    const response = await fetchWithAuth(`/courses/${courseId}/students`);
+    if (!response.ok) throw new Error("Failed to fetch course students");
+    return response.json();
+  },
+
+  removeStudent: async (courseId: number, studentId: number) => {
+    const response = await fetchWithAuth("/courses/remove-student", {
+      method: "POST",
+      body: JSON.stringify({ course_id: courseId, student_id: studentId }),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: "Failed to remove student" }));
+      throw new Error(error.detail || "Failed to remove student");
+    }
+    return response.json();
+  },
 };
 
 // Sessions API
 export const sessionsApi = {
+  get: async (sessionId: number) => {
+    const response = await fetchWithAuth(`/sessions/${sessionId}`);
+    if (!response.ok) throw new Error("Failed to fetch session");
+    return response.json();
+  },
+
   start: async (courseId: number) => {
     const response = await fetchWithAuth("/sessions/start", {
       method: "POST",
@@ -290,10 +314,9 @@ export const sessionsApi = {
   },
 
   get: async (sessionId: number) => {
-    // Backend doesn't have a direct GET /sessions/{id}, but we can get it from course sessions
-    // For now, we'll need to get all sessions for a course and find the one we need
-    // Or we can add this endpoint to backend if needed
-    throw new Error("Direct session get not implemented - use getCourseSessions");
+    const response = await fetchWithAuth(`/sessions/${sessionId}`);
+    if (!response.ok) throw new Error("Failed to fetch session");
+    return response.json();
   },
 
   delete: async (sessionId: number) => {
@@ -370,6 +393,12 @@ export const attendanceApi = {
       const error = await response.json().catch(() => ({ detail: "Failed to retake attendance" }));
       throw new Error(error.detail || "Failed to retake attendance");
     }
+    return response.json();
+  },
+
+  getAll: async () => {
+    const response = await fetchWithAuth("/attendance/all");
+    if (!response.ok) throw new Error("Failed to fetch all attendance records");
     return response.json();
   },
 };

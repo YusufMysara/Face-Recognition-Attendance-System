@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -22,13 +22,14 @@ interface UserFormModalProps {
   onOpenChange: (open: boolean) => void;
   mode: "create" | "edit";
   user?: {
-    id: string;
+    id: number;
     name: string;
     email: string;
     role: string;
     group?: string;
   };
   onSubmit: (data: any) => void;
+  loading?: boolean;
 }
 
 export function UserFormModal({
@@ -37,20 +38,33 @@ export function UserFormModal({
   mode,
   user,
   onSubmit,
+  loading = false,
 }: UserFormModalProps) {
-  const [role, setRole] = useState(user?.role || "Student");
+  const [role, setRole] = useState(user?.role ? user.role.charAt(0).toUpperCase() + user.role.slice(1) : "Student");
   const [name, setName] = useState(user?.name || "");
   const [email, setEmail] = useState(user?.email || "");
   const [group, setGroup] = useState(user?.group || "");
   const [password, setPassword] = useState("");
   const [photos, setPhotos] = useState<File[]>([]);
 
+  // Reset form when modal opens or user changes
+  useEffect(() => {
+    if (open) {
+      setName(user?.name || "");
+      setEmail(user?.email || "");
+      setRole(user?.role ? user.role.charAt(0).toUpperCase() + user.role.slice(1) : "Student");
+      setGroup(user?.group || "");
+      setPassword("");
+      setPhotos([]);
+    }
+  }, [open, user]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const formData = {
       name,
       email,
-      role,
+      role: role.toLowerCase(),
       ...(role === "Student" && { group }),
       ...(password && { password }),
       ...(photos.length > 0 && { photos }),
@@ -76,7 +90,7 @@ export function UserFormModal({
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
             <Label>Role</Label>
-            <Select value={role} onValueChange={setRole} disabled={mode === "edit"}>
+            <Select value={role} onValueChange={setRole} disabled={mode === "edit" || loading}>
               <SelectTrigger className="rounded-lg">
                 <SelectValue />
               </SelectTrigger>
@@ -95,10 +109,11 @@ export function UserFormModal({
               onChange={(e) => setName(e.target.value)}
               className="rounded-lg"
               required
+              disabled={loading}
             />
           </div>
 
-          {role === "Student" && (
+          {role === "Student" && mode === "create" && (
             <div className="space-y-2">
               <Label htmlFor="group">Group</Label>
               <Input
@@ -107,6 +122,7 @@ export function UserFormModal({
                 onChange={(e) => setGroup(e.target.value)}
                 className="rounded-lg"
                 required
+                disabled={loading}
               />
             </div>
           )}
@@ -120,6 +136,7 @@ export function UserFormModal({
               onChange={(e) => setEmail(e.target.value)}
               className="rounded-lg"
               required
+              disabled={loading}
             />
           </div>
 
@@ -134,6 +151,7 @@ export function UserFormModal({
               onChange={(e) => setPassword(e.target.value)}
               className="rounded-lg"
               required={mode === "create"}
+              disabled={loading}
             />
           </div>
 
@@ -147,6 +165,7 @@ export function UserFormModal({
                 multiple
                 onChange={handlePhotoChange}
                 className="rounded-lg"
+                disabled={loading}
               />
               {photos.length > 0 && (
                 <p className="text-xs text-muted-foreground">
@@ -162,11 +181,12 @@ export function UserFormModal({
               variant="outline"
               onClick={() => onOpenChange(false)}
               className="rounded-lg"
+              disabled={loading}
             >
               Cancel
             </Button>
-            <Button type="submit" className="rounded-lg">
-              {mode === "create" ? "Create User" : "Save Changes"}
+            <Button type="submit" className="rounded-lg" disabled={loading}>
+              {loading ? "Saving..." : (mode === "create" ? "Create User" : "Save Changes")}
             </Button>
           </DialogFooter>
         </form>

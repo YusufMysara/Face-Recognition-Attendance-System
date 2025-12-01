@@ -24,6 +24,7 @@ interface AddStudentsModalProps {
   onOpenChange: (open: boolean) => void;
   availableStudents: Student[];
   onSubmit: (studentIds: string[]) => void;
+  loading?: boolean;
 }
 
 export function AddStudentsModal({
@@ -31,6 +32,7 @@ export function AddStudentsModal({
   onOpenChange,
   availableStudents,
   onSubmit,
+  loading = false,
 }: AddStudentsModalProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
@@ -90,6 +92,7 @@ export function AddStudentsModal({
                     <Checkbox
                       checked={selectedStudents.includes(student.id)}
                       onCheckedChange={() => handleToggleStudent(student.id)}
+                      disabled={loading}
                     />
                     <div className="flex-1">
                       <p className="font-medium">{student.name}</p>
@@ -114,15 +117,16 @@ export function AddStudentsModal({
             variant="outline"
             onClick={() => onOpenChange(false)}
             className="rounded-lg"
+            disabled={loading}
           >
             Cancel
           </Button>
           <Button
             onClick={handleSubmit}
-            disabled={selectedStudents.length === 0}
+            disabled={selectedStudents.length === 0 || loading}
             className="rounded-lg"
           >
-            Add Students
+            {loading ? "Adding..." : "Add Students"}
           </Button>
         </DialogFooter>
       </DialogContent>

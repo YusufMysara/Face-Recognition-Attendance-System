@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -23,14 +23,14 @@ interface CourseFormModalProps {
   onOpenChange: (open: boolean) => void;
   mode: "create" | "edit";
   course?: {
-    id: string;
+    id: number;
     name: string;
-    code?: string;
     description: string;
-    teacher: string;
+    teacher_id?: number;
   };
   teachers: { id: string; name: string }[];
   onSubmit: (data: any) => void;
+  loading?: boolean;
 }
 
 export function CourseFormModal({
@@ -40,10 +40,20 @@ export function CourseFormModal({
   course,
   teachers,
   onSubmit,
+  loading = false,
 }: CourseFormModalProps) {
   const [name, setName] = useState(course?.name || "");
   const [description, setDescription] = useState(course?.description || "");
-  const [teacherId, setTeacherId] = useState(course?.teacher || "");
+  const [teacherId, setTeacherId] = useState(course?.teacher_id ? String(course.teacher_id) : "");
+
+  // Reset form when modal opens or course changes
+  useEffect(() => {
+    if (open) {
+      setName(course?.name || "");
+      setDescription(course?.description || "");
+      setTeacherId(course?.teacher_id ? String(course.teacher_id) : "");
+    }
+  }, [open, course]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -72,6 +82,7 @@ export function CourseFormModal({
               onChange={(e) => setName(e.target.value)}
               className="rounded-lg"
               required
+              disabled={loading}
             />
           </div>
 
@@ -83,12 +94,13 @@ export function CourseFormModal({
               onChange={(e) => setDescription(e.target.value)}
               className="rounded-lg"
               rows={3}
+              disabled={loading}
             />
           </div>
 
           <div className="space-y-2">
             <Label>Assigned Teacher</Label>
-            <Select value={teacherId} onValueChange={setTeacherId} required>
+            <Select value={teacherId} onValueChange={setTeacherId} disabled={loading}>
               <SelectTrigger className="rounded-lg">
                 <SelectValue placeholder="Select a teacher" />
               </SelectTrigger>
@@ -108,11 +120,12 @@ export function CourseFormModal({
               variant="outline"
               onClick={() => onOpenChange(false)}
               className="rounded-lg"
+              disabled={loading}
             >
               Cancel
             </Button>
-            <Button type="submit" className="rounded-lg">
-              {mode === "create" ? "Create Course" : "Save Changes"}
+            <Button type="submit" className="rounded-lg" disabled={loading}>
+              {loading ? "Saving..." : (mode === "create" ? "Create Course" : "Save Changes")}
             </Button>
           </DialogFooter>
         </form>

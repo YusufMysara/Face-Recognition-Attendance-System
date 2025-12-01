@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { DataTable, Column } from "@/components/shared/DataTable";
 import { Button } from "@/components/ui/button";
 import { Plus, Pencil, Trash2 } from "lucide-react";
@@ -6,27 +6,46 @@ import { Badge } from "@/components/ui/badge";
 import { UserFormModal } from "@/components/modals/UserFormModal";
 import { ConfirmationModal } from "@/components/modals/ConfirmationModal";
 import { toast } from "sonner";
+import { usersApi, handleApiError } from "@/lib/api";
 
 interface User {
-  id: string;
+  id: number;
   name: string;
   email: string;
   role: string;
   group?: string;
+  photo_path?: string;
 }
 
 export default function ManageUsers() {
-  const [users, setUsers] = useState<User[]>([
-    { id: "1", name: "John Doe", email: "john@example.com", role: "Student", group: "A" },
-    { id: "2", name: "Jane Smith", email: "jane@example.com", role: "Teacher" },
-    { id: "3", name: "Bob Johnson", email: "bob@example.com", role: "Student", group: "B" },
-  ]);
+  const [users, setUsers] = useState<User[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const [userFormOpen, setUserFormOpen] = useState(false);
   const [formMode, setFormMode] = useState<"create" | "edit">("create");
   const [selectedUser, setSelectedUser] = useState<User | undefined>();
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
+  const [formLoading, setFormLoading] = useState(false);
+
+  // Load users on component mount
+  useEffect(() => {
+    loadUsers();
+  }, []);
+
+  const loadUsers = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const response = await usersApi.list();
+      setUsers(response);
+    } catch (err) {
+      setError(handleApiError(err));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleCreateUser = () => {
     setFormMode("create");
@@ -45,37 +64,69 @@ export default function ManageUsers() {
     setDeleteModalOpen(true);
   };
 
-  const handleDeleteConfirm = () => {
-    if (userToDelete) {
+  const handleDeleteConfirm = async () => {
+    if (!userToDelete) return;
+
+    try {
+      await usersApi.delete(userToDelete.id);
       setUsers(users.filter((u) => u.id !== userToDelete.id));
       toast.success("User deleted successfully");
       setDeleteModalOpen(false);
       setUserToDelete(null);
+    } catch (err) {
+      toast.error(handleApiError(err));
     }
   };
 
-  const handleFormSubmit = (data: any) => {
-    if (formMode === "create") {
-      const newUser: User = {
-        id: String(users.length + 1),
-        name: data.name,
-        email: data.email,
-        role: data.role,
-        ...(data.role === "Student" && { group: data.group }),
-      };
-      setUsers([...users, newUser]);
-      toast.success("User created successfully");
-    } else if (selectedUser) {
-      setUsers(
-        users.map((u) =>
-          u.id === selectedUser.id
-            ? { ...u, name: data.name, email: data.email, ...(data.group && { group: data.group }) }
-            : u
-        )
-      );
-      toast.success("User updated successfully");
+  const handleFormSubmit = async (data: any) => {
+    try {
+      setFormLoading(true);
+
+      if (formMode === "create") {
+        const payload = {
+          name: data.name,
+          email: data.email,
+          password: data.password,
+          role: data.role.toLowerCase(),
+          ...(data.role === "student" && { group: data.group }),
+        };
+        const newUser = await usersApi.create(payload);
+
+        // Upload photos for students after user creation
+        if (data.role === "student" && data.photos && data.photos.length > 0) {
+          try {
+            for (const photo of data.photos) {
+              await usersApi.uploadPhoto(newUser.id, photo);
+            }
+            toast.success("User and photos uploaded successfully");
+          } catch (photoErr) {
+            toast.warning("User created but photo upload failed. You can upload photos later.");
+          }
+        } else {
+          toast.success("User created successfully");
+        }
+
+        setUsers([...users, newUser]);
+      } else if (selectedUser) {
+        const payload: any = {};
+        if (data.name !== selectedUser.name) payload.name = data.name;
+        if (data.email !== selectedUser.email) payload.email = data.email;
+        if (data.group !== selectedUser.group) payload.group = data.group;
+        if (data.role !== selectedUser.role) payload.role = data.role;
+        if (data.password) payload.password = data.password;
+
+        if (Object.keys(payload).length > 0) {
+          const updatedUser = await usersApi.update(selectedUser.id, payload);
+          setUsers(users.map((u) => (u.id === selectedUser.id ? updatedUser : u)));
+        }
+        toast.success("User updated successfully");
+      }
+      setUserFormOpen(false);
+    } catch (err) {
+      toast.error(handleApiError(err));
+    } finally {
+      setFormLoading(false);
     }
-    setUserFormOpen(false);
   };
 
   const columns: Column<User>[] = [
@@ -84,8 +135,8 @@ export default function ManageUsers() {
     {
       header: "Role",
       accessor: (row) => (
-        <Badge variant={row.role === "Teacher" ? "default" : "secondary"}>
-          {row.role}
+        <Badge variant={row.role === "teacher" ? "default" : "secondary"}>
+          {row.role.charAt(0).toUpperCase() + row.role.slice(1)}
         </Badge>
       ),
     },
@@ -103,6 +154,34 @@ export default function ManageUsers() {
       ),
     },
   ];
+
+  if (loading) {
+    return (
+      <div className="content-container">
+        <div className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+            <p className="text-muted-foreground">Loading users...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="content-container">
+        <div className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <p className="text-destructive mb-4">{error}</p>
+            <Button onClick={loadUsers} variant="outline">
+              Try Again
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="content-container">
@@ -125,6 +204,7 @@ export default function ManageUsers() {
         mode={formMode}
         user={selectedUser}
         onSubmit={handleFormSubmit}
+        loading={formLoading}
       />
 
       <ConfirmationModal

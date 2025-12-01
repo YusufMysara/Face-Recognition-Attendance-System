@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { DataTable, Column } from "@/components/shared/DataTable";
 import { Button } from "@/components/ui/button";
 import { Plus, Eye, Pencil, Trash2 } from "lucide-react";
@@ -6,48 +6,69 @@ import { CourseFormModal } from "@/components/modals/CourseFormModal";
 import { ConfirmationModal } from "@/components/modals/ConfirmationModal";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
+import { coursesApi, usersApi, handleApiError } from "@/lib/api";
 
 interface Course {
-  id: string;
+  id: number;
   name: string;
-  code: string;
-  teacher: string;
-  teacherId: string;
   description: string;
+  teacher_id?: number;
+  teacher_name?: string;
+}
+
+interface Teacher {
+  id: number;
+  name: string;
+  email: string;
+  role: string;
 }
 
 export default function ManageCourses() {
   const navigate = useNavigate();
-  const [courses, setCourses] = useState<Course[]>([
-    {
-      id: "1",
-      name: "Computer Science 101",
-      code: "CS101",
-      teacher: "Dr. Smith",
-      teacherId: "2",
-      description: "Introduction to Computer Science",
-    },
-    {
-      id: "2",
-      name: "Mathematics Advanced",
-      code: "MATH201",
-      teacher: "Prof. Johnson",
-      teacherId: "4",
-      description: "Advanced Mathematics",
-    },
-  ]);
-
-  const [teachers] = useState([
-    { id: "2", name: "Dr. Smith" },
-    { id: "4", name: "Prof. Johnson" },
-    { id: "5", name: "Dr. Williams" },
-  ]);
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [teachers, setTeachers] = useState<Teacher[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const [courseFormOpen, setCourseFormOpen] = useState(false);
   const [formMode, setFormMode] = useState<"create" | "edit">("create");
   const [selectedCourse, setSelectedCourse] = useState<Course | undefined>();
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [courseToDelete, setCourseToDelete] = useState<Course | null>(null);
+  const [formLoading, setFormLoading] = useState(false);
+
+  // Load courses and teachers on component mount
+  useEffect(() => {
+    loadCoursesAndTeachers();
+  }, []);
+
+  const loadCoursesAndTeachers = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      // Load courses and teachers in parallel
+      const [coursesResponse, teachersResponse] = await Promise.all([
+        coursesApi.list(),
+        usersApi.list().then(users => users.filter(user => user.role === "teacher"))
+      ]);
+
+      // Enrich courses with teacher names
+      const enrichedCourses = coursesResponse.map(course => ({
+        ...course,
+        teacher_name: course.teacher_id
+          ? teachersResponse.find(teacher => teacher.id === course.teacher_id)?.name
+          : undefined
+      }));
+
+      setCourses(enrichedCourses);
+      setTeachers(teachersResponse);
+    } catch (err) {
+      setError(handleApiError(err));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleCreateCourse = () => {
     setFormMode("create");
@@ -61,7 +82,7 @@ export default function ManageCourses() {
     setCourseFormOpen(true);
   };
 
-  const handleViewCourse = (courseId: string) => {
+  const handleViewCourse = (courseId: number) => {
     navigate(`/admin/course/${courseId}`);
   };
 
@@ -70,51 +91,77 @@ export default function ManageCourses() {
     setDeleteModalOpen(true);
   };
 
-  const handleDeleteConfirm = () => {
-    if (courseToDelete) {
+  const handleDeleteConfirm = async () => {
+    if (!courseToDelete) return;
+
+    try {
+      await coursesApi.delete(courseToDelete.id);
       setCourses(courses.filter((c) => c.id !== courseToDelete.id));
       toast.success("Course deleted successfully");
       setDeleteModalOpen(false);
       setCourseToDelete(null);
+    } catch (err) {
+      toast.error(handleApiError(err));
     }
   };
 
-  const handleFormSubmit = (data: any) => {
-    const teacherName = teachers.find((t) => t.id === data.teacher_id)?.name || "";
+  const handleFormSubmit = async (data: any) => {
+    try {
+      setFormLoading(true);
 
-    if (formMode === "create") {
-      const newCourse: Course = {
-        id: String(courses.length + 1),
-        name: data.name,
-        code: `COURSE${courses.length + 1}`,
-        description: data.description,
-        teacher: teacherName,
-        teacherId: data.teacher_id,
-      };
-      setCourses([...courses, newCourse]);
-      toast.success("Course created successfully");
-    } else if (selectedCourse) {
-      setCourses(
-        courses.map((c) =>
-          c.id === selectedCourse.id
-            ? {
-                ...c,
-                name: data.name,
-                description: data.description,
-                teacher: teacherName,
-                teacherId: data.teacher_id,
-              }
-            : c
-        )
-      );
-      toast.success("Course updated successfully");
+      if (formMode === "create") {
+        const payload = {
+          name: data.name,
+          description: data.description,
+          teacher_id: data.teacher_id ? parseInt(data.teacher_id) : undefined,
+        };
+        const newCourse = await coursesApi.create(payload);
+
+        // Add teacher name for display
+        const enrichedCourse = {
+          ...newCourse,
+          teacher_name: newCourse.teacher_id
+            ? teachers.find(teacher => teacher.id === newCourse.teacher_id)?.name
+            : undefined
+        };
+
+        setCourses([...courses, enrichedCourse]);
+        toast.success("Course created successfully");
+      } else if (selectedCourse) {
+        const payload: any = {};
+        if (data.name !== selectedCourse.name) payload.name = data.name;
+        if (data.description !== selectedCourse.description) payload.description = data.description;
+        if (parseInt(data.teacher_id) !== selectedCourse.teacher_id) payload.teacher_id = parseInt(data.teacher_id);
+
+        if (Object.keys(payload).length > 0) {
+          const updatedCourse = await coursesApi.update(selectedCourse.id, payload);
+
+          // Add teacher name for display
+          const enrichedCourse = {
+            ...updatedCourse,
+            teacher_name: updatedCourse.teacher_id
+              ? teachers.find(teacher => teacher.id === updatedCourse.teacher_id)?.name
+              : undefined
+          };
+
+          setCourses(courses.map((c) => (c.id === selectedCourse.id ? enrichedCourse : c)));
+        }
+        toast.success("Course updated successfully");
+      }
+      setCourseFormOpen(false);
+    } catch (err) {
+      toast.error(handleApiError(err));
+    } finally {
+      setFormLoading(false);
     }
-    setCourseFormOpen(false);
   };
 
   const columns: Column<Course>[] = [
     { header: "Course Name", accessor: "name" },
-    { header: "Teacher", accessor: "teacher" },
+    {
+      header: "Teacher",
+      accessor: (row) => row.teacher_name || "Not assigned"
+    },
     {
       header: "Actions",
       accessor: (row) => (
@@ -132,6 +179,34 @@ export default function ManageCourses() {
       ),
     },
   ];
+
+  if (loading) {
+    return (
+      <div className="content-container">
+        <div className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+            <p className="text-muted-foreground">Loading courses...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="content-container">
+        <div className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <p className="text-destructive mb-4">{error}</p>
+            <Button onClick={loadCoursesAndTeachers} variant="outline">
+              Try Again
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="content-container">
@@ -153,8 +228,9 @@ export default function ManageCourses() {
         onOpenChange={setCourseFormOpen}
         mode={formMode}
         course={selectedCourse}
-        teachers={teachers}
+        teachers={teachers.map(t => ({ id: String(t.id), name: t.name }))}
         onSubmit={handleFormSubmit}
+        loading={formLoading}
       />
 
       <ConfirmationModal

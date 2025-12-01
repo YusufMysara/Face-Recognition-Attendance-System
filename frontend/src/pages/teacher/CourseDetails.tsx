@@ -4,69 +4,126 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { DataTable, Column } from "@/components/shared/DataTable";
-import { Play, Eye, Trash2, Users, Calendar } from "lucide-react";
+import { Play, Eye, Trash2, Users, Calendar, Loader2 } from "lucide-react";
 import { ConfirmationModal } from "@/components/modals/ConfirmationModal";
-import { useToast } from "@/hooks/use-toast";
-import { sessionsApi } from "@/lib/api";
+import { toast } from "sonner";
+import { coursesApi, sessionsApi, handleApiError } from "@/lib/api";
 
 interface Session {
-  id: string;
-  date: string;
-  attendance: string;
+  id: number;
+  started_at: string;
+  status: string;
+  attendance_count?: number;
+  total_students?: number;
+}
+
+interface Course {
+  id: number;
+  name: string;
+  description: string;
+  teacher_id?: number;
+}
+
+interface Student {
+  id: number;
+  name: string;
+  email: string;
+  group?: string;
 }
 
 export default function CourseDetails() {
   const { courseId } = useParams<{ courseId: string }>();
   const navigate = useNavigate();
-  const { toast } = useToast();
-  
-  const [courseName, setCourseName] = useState("Computer Science 101");
-  const [studentCount, setStudentCount] = useState(45);
-  const [sessionCount, setSessionCount] = useState(12);
-  const [sessions, setSessions] = useState<Session[]>([
-    { id: "1", date: "2024-03-20 09:00 AM", attendance: "42/45" },
-    { id: "2", date: "2024-03-19 11:00 AM", attendance: "40/45" },
-    { id: "3", date: "2024-03-18 02:00 PM", attendance: "43/45" },
-  ]);
-  
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
 
-  const handleStartNewSession = () => {
-    navigate(`/teacher/camera?course_id=${courseId}`);
+  const [course, setCourse] = useState<Course | null>(null);
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [enrolledStudents, setEnrolledStudents] = useState<Student[]>([]);
+  const [studentCount, setStudentCount] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null);
+  const [deletingSession, setDeletingSession] = useState(false);
+
+  // Load course and session data on mount
+  useEffect(() => {
+    if (courseId) {
+      loadCourseData();
+    }
+  }, [courseId]);
+
+  const loadCourseData = async () => {
+    if (!courseId) return;
+
+    try {
+      setLoading(true);
+      setError(null);
+
+      const courseIdNum = parseInt(courseId);
+      const [courseData, sessionsData, enrolledData] = await Promise.all([
+        coursesApi.get(courseIdNum),
+        coursesApi.getCourseSessions(courseIdNum),
+        coursesApi.getCourseStudents(courseIdNum)
+      ]);
+
+      setCourse(courseData);
+      setSessions(sessionsData);
+      setEnrolledStudents(enrolledData);
+      setStudentCount(enrolledData.length);
+
+    } catch (err) {
+      setError(handleApiError(err));
+      toast.error(handleApiError(err));
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleViewSession = (sessionId: string) => {
+  const handleStartNewSession = () => {
+    if (courseId) {
+      navigate(`/teacher/camera?course_id=${courseId}`);
+    }
+  };
+
+  const handleViewSession = (sessionId: number) => {
     navigate(`/teacher/session/${sessionId}`);
   };
 
   const handleDeleteSession = async () => {
     if (!selectedSessionId) return;
-    
+
     try {
-      await sessionsApi.deleteSession(selectedSessionId);
+      setDeletingSession(true);
+      await sessionsApi.delete(selectedSessionId);
       setSessions(sessions.filter(s => s.id !== selectedSessionId));
-      
-      toast({
-        title: "Session Deleted",
-        description: "The session has been removed successfully.",
-      });
+      toast.success("Session deleted successfully");
     } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to delete session. Please try again.",
-        variant: "destructive",
-      });
+      toast.error(handleApiError(error));
     } finally {
+      setDeletingSession(false);
       setShowDeleteModal(false);
       setSelectedSessionId(null);
     }
   };
 
   const columns: Column<Session>[] = [
-    { header: "Session ID", accessor: "id" },
-    { header: "Date", accessor: "date" },
-    { header: "Attendance", accessor: "attendance" },
+    {
+      header: "Session ID",
+      accessor: (row) => `Session ${row.id}`
+    },
+    {
+      header: "Date",
+      accessor: (row) => new Date(row.started_at).toLocaleString()
+    },
+    {
+      header: "Status",
+      accessor: (row) => (
+        <Badge variant={row.status === "open" ? "default" : "secondary"}>
+          {row.status}
+        </Badge>
+      )
+    },
     {
       header: "Actions",
       accessor: (row) => (
@@ -87,6 +144,7 @@ export default function CourseDetails() {
               setSelectedSessionId(row.id);
               setShowDeleteModal(true);
             }}
+            disabled={row.status === "open"}
           >
             <Trash2 className="w-4 h-4 text-destructive" />
           </Button>
@@ -95,12 +153,40 @@ export default function CourseDetails() {
     },
   ];
 
+  if (loading) {
+    return (
+      <div className="content-container">
+        <div className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+            <p className="text-muted-foreground">Loading course details...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !course) {
+    return (
+      <div className="content-container">
+        <div className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <p className="text-destructive mb-4">{error || "Course not found"}</p>
+            <Button onClick={loadCourseData} variant="outline">
+              Try Again
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="content-container">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-3xl font-bold mb-2">{courseName}</h1>
-          <p className="text-muted-foreground">Course Details & Sessions</p>
+          <h1 className="text-3xl font-bold mb-2">{course.name}</h1>
+          <p className="text-muted-foreground">{course.description}</p>
         </div>
         <Button
           className="rounded-xl bg-success hover:bg-success/90"
@@ -131,7 +217,7 @@ export default function CourseDetails() {
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Total Sessions</p>
-              <p className="text-2xl font-bold">{sessionCount}</p>
+              <p className="text-2xl font-bold">{sessions.length}</p>
             </div>
           </div>
         </Card>
@@ -148,8 +234,7 @@ export default function CourseDetails() {
         onOpenChange={setShowDeleteModal}
         title="Delete Session"
         description="Are you sure you want to delete this session? This action cannot be undone."
-        confirmText="Delete"
-        cancelText="Cancel"
+        confirmText={deletingSession ? "Deleting..." : "Delete"}
         onConfirm={handleDeleteSession}
         variant="destructive"
       />

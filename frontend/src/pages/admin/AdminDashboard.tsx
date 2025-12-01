@@ -1,14 +1,122 @@
+import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { StatsCard } from "@/components/shared/StatsCard";
-import { Users, BookOpen, Calendar, TrendingUp } from "lucide-react";
+import { Users, BookOpen, Calendar, TrendingUp, Loader2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { usersApi, coursesApi, handleApiError } from "@/lib/api";
+import { toast } from "sonner";
+
+interface DashboardStats {
+  totalStudents: number;
+  totalTeachers: number;
+  totalCourses: number;
+  activeSessions: number;
+}
 
 export default function AdminDashboard() {
-  const stats = [
-    { title: "Total Students", value: "1,234", icon: Users, trend: { value: "12%", isPositive: true } },
-    { title: "Total Teachers", value: "56", icon: Users, trend: { value: "5%", isPositive: true } },
-    { title: "Total Courses", value: "42", icon: BookOpen, trend: { value: "3%", isPositive: true } },
-    { title: "Active Sessions", value: "18", icon: Calendar, trend: { value: "8%", isPositive: true } },
+  const navigate = useNavigate();
+  const [stats, setStats] = useState<DashboardStats>({
+    totalStudents: 0,
+    totalTeachers: 0,
+    totalCourses: 0,
+    activeSessions: 0,
+  });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Load dashboard data on mount
+  useEffect(() => {
+    loadDashboardStats();
+  }, []);
+
+  const loadDashboardStats = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      // Load all data in parallel
+      const [usersData, coursesData] = await Promise.all([
+        usersApi.list(),
+        coursesApi.list()
+      ]);
+
+      // Calculate stats from the data
+      const totalStudents = usersData.filter(user => user.role === "student").length;
+      const totalTeachers = usersData.filter(user => user.role === "teacher").length;
+      const totalCourses = coursesData.length;
+      // For active sessions, we can't easily get this without a new endpoint
+      // For now, we'll set it to 0
+      const activeSessions = 0;
+
+      setStats({
+        totalStudents,
+        totalTeachers,
+        totalCourses,
+        activeSessions
+      });
+    } catch (err) {
+      setError(handleApiError(err));
+      toast.error(handleApiError(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const displayStats = [
+    {
+      title: "Total Students",
+      value: stats.totalStudents.toString(),
+      icon: Users,
+      trend: { value: "0%", isPositive: true }
+    },
+    {
+      title: "Total Teachers",
+      value: stats.totalTeachers.toString(),
+      icon: Users,
+      trend: { value: "0%", isPositive: true }
+    },
+    {
+      title: "Total Courses",
+      value: stats.totalCourses.toString(),
+      icon: BookOpen,
+      trend: { value: "0%", isPositive: true }
+    },
+    {
+      title: "Active Sessions",
+      value: stats.activeSessions.toString(),
+      icon: Calendar,
+      trend: { value: "0%", isPositive: true }
+    },
   ];
+
+  if (loading) {
+    return (
+      <div className="content-container">
+        <div className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+            <p className="text-muted-foreground">Loading dashboard...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="content-container">
+        <div className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <p className="text-destructive mb-4">{error}</p>
+            <Button onClick={loadDashboardStats} variant="outline">
+              Try Again
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="content-container">
@@ -18,7 +126,7 @@ export default function AdminDashboard() {
       </div>
 
       <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        {stats.map((stat) => (
+        {displayStats.map((stat) => (
           <StatsCard key={stat.title} {...stat} />
         ))}
       </div>
@@ -27,35 +135,44 @@ export default function AdminDashboard() {
         <Card className="p-6 rounded-xl shadow-md">
           <h2 className="text-xl font-semibold mb-4">Recent Activities</h2>
           <div className="space-y-4">
-            {[
-              { action: "New user registered", time: "2 minutes ago" },
-              { action: "Course updated", time: "15 minutes ago" },
-              { action: "Attendance session started", time: "1 hour ago" },
-              { action: "Student photo uploaded", time: "2 hours ago" },
-            ].map((activity, i) => (
-              <div key={i} className="flex items-center justify-between py-2 border-b last:border-0">
-                <span className="text-sm">{activity.action}</span>
-                <span className="text-xs text-muted-foreground">{activity.time}</span>
-              </div>
-            ))}
+            <div className="text-center text-muted-foreground py-8">
+              <p>Activity logging not yet implemented</p>
+              <p className="text-xs mt-2">This feature requires additional backend endpoints</p>
+            </div>
           </div>
         </Card>
 
         <Card className="p-6 rounded-xl shadow-md">
           <h2 className="text-xl font-semibold mb-4">Quick Actions</h2>
           <div className="space-y-3">
-            <button className="w-full p-3 text-left rounded-lg bg-muted hover:bg-muted/80 transition-colors">
+            <Button
+              variant="ghost"
+              className="w-full justify-start p-3 h-auto rounded-lg"
+              onClick={() => navigate("/admin/users")}
+            >
               Create New User
-            </button>
-            <button className="w-full p-3 text-left rounded-lg bg-muted hover:bg-muted/80 transition-colors">
+            </Button>
+            <Button
+              variant="ghost"
+              className="w-full justify-start p-3 h-auto rounded-lg"
+              onClick={() => navigate("/admin/courses")}
+            >
               Add New Course
-            </button>
-            <button className="w-full p-3 text-left rounded-lg bg-muted hover:bg-muted/80 transition-colors">
+            </Button>
+            <Button
+              variant="ghost"
+              className="w-full justify-start p-3 h-auto rounded-lg"
+              onClick={() => navigate("/admin/upload-photos")}
+            >
               Upload Student Photos
-            </button>
-            <button className="w-full p-3 text-left rounded-lg bg-muted hover:bg-muted/80 transition-colors">
+            </Button>
+            <Button
+              variant="ghost"
+              className="w-full justify-start p-3 h-auto rounded-lg"
+              onClick={() => navigate("/admin/attendance")}
+            >
               View All Reports
-            </button>
+            </Button>
           </div>
         </Card>
       </div>

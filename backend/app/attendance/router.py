@@ -164,16 +164,27 @@ def get_student_attendance(
         raise HTTPException(status_code=404, detail="Student not found")
 
     records_with_names = (
-        db.query(AttendanceModel, User.name)
+        db.query(AttendanceModel, User.name, Course.name, SessionModel.course_id)
         .join(User, AttendanceModel.student_id == User.id)
+        .join(SessionModel, AttendanceModel.session_id == SessionModel.id)
+        .join(Course, SessionModel.course_id == Course.id)
         .filter(AttendanceModel.student_id == student_id)
         .all()
     )
     history = [
-        _to_response(record, student_name)
-        for record, student_name in records_with_names
+        {
+            "id": record.id,
+            "session_id": record.session_id,
+            "student_id": record.student_id,
+            "status": record.status,
+            "timestamp": record.timestamp,
+            "student_name": student_name,
+            "course_id": course_id,
+            "course_name": course_name,
+        }
+        for record, student_name, course_name, course_id in records_with_names
     ]
-    records = [record for record, _ in records_with_names]
+    records = [record for record, _, _, _ in records_with_names]
 
     course_totals: Dict[int, Dict[str, int]] = defaultdict(lambda: {"present": 0, "total": 0})
     for session in db.query(SessionModel).all():
@@ -233,3 +244,29 @@ def edit_attendance(
     )
     return _to_response(record, student_name)
 
+
+@router.get("/all")
+def get_all_attendance(
+    current_user: User = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    """Admin endpoint to get all attendance records with course information"""
+    records = (
+        db.query(AttendanceModel, User.name, Course.name)
+        .join(User, AttendanceModel.student_id == User.id)
+        .join(SessionModel, AttendanceModel.session_id == SessionModel.id)
+        .join(Course, SessionModel.course_id == Course.id)
+        .all()
+    )
+    return [
+        {
+            "id": record.id,
+            "session_id": record.session_id,
+            "student_id": record.student_id,
+            "student_name": student_name,
+            "course_name": course_name,
+            "status": record.status,
+            "timestamp": record.timestamp.isoformat() if record.timestamp else None,
+        }
+        for record, student_name, course_name in records
+    ]

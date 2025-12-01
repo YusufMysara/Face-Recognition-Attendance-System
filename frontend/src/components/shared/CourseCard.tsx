@@ -6,7 +6,7 @@ interface CourseCardProps {
   id: string;
   name: string;
   code: string;
-  onView: (id: string) => void;
+  onView: () => void;
 }
 
 export function CourseCard({ id, name, code, onView }: CourseCardProps) {
@@ -21,7 +21,7 @@ export function CourseCard({ id, name, code, onView }: CourseCardProps) {
           <p className="text-sm text-muted-foreground mb-4">{code}</p>
           <Button
             className="w-full rounded-xl"
-            onClick={() => onView(id)}
+            onClick={onView}
           >
             View Course
           </Button>
