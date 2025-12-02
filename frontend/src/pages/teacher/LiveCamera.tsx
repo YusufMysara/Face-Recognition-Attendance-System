@@ -1,6 +1,7 @@
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Camera, CameraOff, Users, Square, AlertCircle, Loader2 } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Camera, CameraOff, Users, Square, AlertCircle, Loader2, RotateCcw } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { Badge } from "@/components/ui/badge";
 import { useSearchParams, useNavigate } from "react-router-dom";
@@ -44,6 +45,8 @@ export default function LiveCamera() {
   const [loading, setLoading] = useState(true);
   const [startingSession, setStartingSession] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [cameraDevices, setCameraDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedCameraId, setSelectedCameraId] = useState<string>("");
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -53,6 +56,51 @@ export default function LiveCamera() {
   useEffect(() => {
     console.log("Video element mounted:", !!videoRef.current);
   }, []);
+
+  // Load available cameras (without requesting permission)
+  useEffect(() => {
+    loadCameraDevices();
+  }, []);
+
+  const loadCameraDevices = async () => {
+    try {
+      // Check if we have camera permission by trying to enumerate devices
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoDevices = devices.filter(device => device.kind === 'videoinput');
+
+      // Filter out devices without proper labels (usually means no permission)
+      const accessibleDevices = videoDevices.filter(device => device.label || device.deviceId);
+
+      if (accessibleDevices.length === 0 && videoDevices.length > 0) {
+        // We have devices but no labels, try to get permission
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          stream.getTracks().forEach(track => track.stop()); // Stop the stream immediately
+
+          // Now enumerate again with permission
+          const devicesWithPermission = await navigator.mediaDevices.enumerateDevices();
+          const videoDevicesWithPermission = devicesWithPermission.filter(device => device.kind === 'videoinput');
+          setCameraDevices(videoDevicesWithPermission);
+
+          if (videoDevicesWithPermission.length > 0 && !selectedCameraId) {
+            setSelectedCameraId(videoDevicesWithPermission[0].deviceId);
+          }
+        } catch (permissionErr) {
+          console.error("Camera permission denied:", permissionErr);
+          setCameraDevices([]);
+        }
+      } else {
+        // We already have accessible devices
+        setCameraDevices(accessibleDevices);
+        if (accessibleDevices.length > 0 && !selectedCameraId) {
+          setSelectedCameraId(accessibleDevices[0].deviceId);
+        }
+      }
+    } catch (err) {
+      console.error("Error loading camera devices:", err);
+      setCameraDevices([]);
+    }
+  };
 
   const sessionId = searchParams.get("session_id");
   const courseId = searchParams.get("course_id");
@@ -197,9 +245,14 @@ export default function LiveCamera() {
       console.log("Entering camera start block");
       try {
         console.log("Requesting camera access...");
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 640 }, height: { ideal: 480 } }
-        });
+        const constraints: MediaStreamConstraints = {
+          video: {
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            deviceId: selectedCameraId ? { exact: selectedCameraId } : undefined
+          }
+        };
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
         console.log("Camera access granted, stream:", stream);
 
         if (videoRef.current) {
@@ -496,6 +549,34 @@ export default function LiveCamera() {
                 </div>
               )}
             </div>
+
+            {cameraDevices.length > 1 && (
+              <div className="mb-4">
+                <label className="text-sm font-medium mb-2 block">Select Camera</label>
+                <Select
+                  value={selectedCameraId}
+                  onValueChange={(value) => {
+                    setSelectedCameraId(value);
+                    // If camera is active, restart it with new device
+                    if (isCameraActive) {
+                      handleToggleCamera(); // Stop current camera
+                      setTimeout(() => handleToggleCamera(), 100); // Start with new camera
+                    }
+                  }}
+                >
+                  <SelectTrigger className="rounded-xl">
+                    <SelectValue placeholder="Choose camera" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {cameraDevices.map((device) => (
+                      <SelectItem key={device.deviceId} value={device.deviceId}>
+                        {device.label || `Camera ${cameraDevices.indexOf(device) + 1}`}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
 
             <div className="flex gap-3">
               <Button
