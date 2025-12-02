@@ -1,10 +1,10 @@
 import { useState, useEffect } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Calendar, Users, CheckCircle2, XCircle, Loader2 } from "lucide-react";
+import { Calendar, Users, CheckCircle2, XCircle, Loader2, RotateCcw } from "lucide-react";
 import { attendanceApi, coursesApi, sessionsApi, handleApiError } from "@/lib/api";
 import { toast } from "sonner";
 
@@ -13,6 +13,7 @@ interface Student {
   name: string;
   email: string;
   status: "present" | "absent";
+  attendance_id?: number;
   marked_at?: string;
 }
 
@@ -26,11 +27,13 @@ interface SessionInfo {
 
 export default function SessionDetails() {
   const { sessionId } = useParams<{ sessionId: string }>();
+  const navigate = useNavigate();
 
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   // Load session data on mount
   useEffect(() => {
@@ -51,7 +54,11 @@ export default function SessionDetails() {
       // First get the session data
       const sessionData = await sessionsApi.get(sessionIdNum);
 
-      // Then get attendance records for this session
+      // Get course information and enrolled students
+      const courseData = await coursesApi.get(sessionData.course_id);
+      const enrolledStudents = await coursesApi.getCourseStudents(sessionData.course_id);
+
+      // Get existing attendance records for this session
       let attendanceData: any[] = [];
       try {
         attendanceData = await attendanceApi.getSessionAttendance(sessionIdNum);
@@ -60,31 +67,32 @@ export default function SessionDetails() {
         console.log("No attendance data yet for this session");
       }
 
-      // Get course information
-      let courseName = "Unknown Course";
-      try {
-        const courseData = await coursesApi.get(sessionData.course_id);
-        courseName = courseData.name;
-      } catch (courseErr) {
-        console.log("Could not fetch course data");
-      }
-
       const sessionInfo: SessionInfo = {
         id: sessionIdNum,
         started_at: sessionData.started_at,
         status: sessionData.status,
         course_id: sessionData.course_id,
-        course_name: courseName
+        course_name: courseData.name
       };
 
-      // Transform attendance data
-      const studentsData: Student[] = attendanceData.map(attendance => ({
-        id: attendance.student_id,
-        name: attendance.student_name || `Student ${attendance.student_id}`,
-        email: attendance.student_email || "",
-        status: attendance.status,
-        marked_at: attendance.timestamp
-      }));
+      // Create a map of attendance records by student_id for quick lookup
+      const attendanceMap = new Map();
+      attendanceData.forEach(attendance => {
+        attendanceMap.set(attendance.student_id, attendance);
+      });
+
+      // Transform data to show all enrolled students with their attendance status
+      const studentsData: Student[] = enrolledStudents.map(student => {
+        const attendanceRecord = attendanceMap.get(student.id);
+        return {
+          id: student.id,
+          name: student.name,
+          email: student.email,
+          attendance_id: attendanceRecord?.id,
+          status: attendanceRecord ? attendanceRecord.status : "absent",
+          marked_at: attendanceRecord?.timestamp
+        };
+      });
 
       setSession(sessionInfo);
       setStudents(studentsData);
@@ -98,6 +106,79 @@ export default function SessionDetails() {
 
   const presentCount = students.filter(s => s.status === "present").length;
   const totalCount = students.length;
+
+  const handleRetake = async () => {
+    if (!sessionId) return;
+
+    try {
+      setSubmitting(true);
+      const sessionIdNum = parseInt(sessionId);
+
+      // Navigate to live camera with session_id to retake
+      navigate(`/teacher/camera?session_id=${sessionIdNum}`);
+    } catch (err) {
+      toast.error(handleApiError(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const toggleAttendance = async (studentId: number) => {
+    if (!sessionId) return;
+
+    const student = students.find(s => s.id === studentId);
+    if (!student) return;
+
+    const newStatus = student.status === "present" ? "absent" : "present";
+    const sessionIdNum = parseInt(sessionId);
+
+    try {
+      let result;
+      if (student.attendance_id) {
+        // Update existing record
+        result = await attendanceApi.edit(student.attendance_id, newStatus);
+      } else {
+        // Create new record for students without attendance
+        result = await attendanceApi.createManual(sessionIdNum, studentId, newStatus);
+      }
+
+      // Update local state
+      setStudents(students.map(s =>
+        s.id === studentId
+          ? {
+              ...s,
+              status: newStatus,
+              attendance_id: result.id,
+              marked_at: result.timestamp
+            }
+          : s
+      ));
+
+      toast.success(`Marked ${student.name} as ${newStatus}`);
+    } catch (err) {
+      toast.error(handleApiError(err));
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!sessionId) return;
+
+    try {
+      setSubmitting(true);
+      const sessionIdNum = parseInt(sessionId);
+
+      // Submit/finalize the session
+      await sessionsApi.submit(sessionIdNum);
+
+      toast.success("Session submitted successfully");
+      // Reload the session data to show updated status
+      loadSessionData();
+    } catch (err) {
+      toast.error(handleApiError(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -179,18 +260,66 @@ export default function SessionDetails() {
         </Card>
       </div>
 
+      {session.status !== "submitted" && (
+        <Card className="p-6 rounded-xl shadow-md mb-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-xl font-semibold mb-2">Session Actions</h2>
+              <p className="text-muted-foreground">
+                Manage this session - retake attendance or submit final results
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <Button
+                variant="outline"
+                onClick={handleRetake}
+                disabled={submitting}
+              >
+                <RotateCcw className="w-4 h-4 mr-2" />
+                Retake
+              </Button>
+              <Button
+                onClick={handleSubmit}
+                disabled={submitting}
+              >
+                {submitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Submitting...
+                  </>
+                ) : (
+                  "Submit Session"
+                )}
+              </Button>
+            </div>
+          </div>
+        </Card>
+      )}
+
       <Card className="p-6 rounded-xl shadow-md">
-        <h2 className="text-xl font-semibold mb-4">Student List</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-semibold">Student List</h2>
+          {session.status !== "submitted" && (
+            <p className="text-sm text-muted-foreground">
+              Click on students to change their attendance status
+            </p>
+          )}
+        </div>
         {students.length === 0 ? (
           <p className="text-center text-muted-foreground py-8">
-            No attendance records found for this session.
+            No students enrolled in this course.
           </p>
         ) : (
           <div className="space-y-3">
             {students.map((student) => (
               <div
                 key={student.id}
-                className="flex items-center gap-4 p-4 rounded-lg bg-muted"
+                className={`flex items-center gap-4 p-4 rounded-lg transition-colors ${
+                  session.status !== "submitted"
+                    ? "bg-muted hover:bg-muted/80 cursor-pointer"
+                    : "bg-muted"
+                }`}
+                onClick={() => session.status !== "submitted" && toggleAttendance(student.id)}
               >
                 <Avatar className="w-12 h-12">
                   <AvatarFallback className="bg-primary/10 text-primary">

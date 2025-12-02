@@ -82,7 +82,7 @@ export default function StudentDashboard() {
     .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
     .slice(0, 4)
     .map(record => ({
-      date: new Date(record.timestamp).toLocaleDateString(),
+      session: record.session_name || 'Session',
       course: record.course_name,
       status: record.status === "present" ? "Present" : "Absent"
     }));
@@ -164,7 +164,7 @@ export default function StudentDashboard() {
                     <span className="text-sm font-semibold text-primary">{course.attendance}</span>
                   </div>
                   <p className="text-sm text-muted-foreground">
-                    Course ID: {course.id} • {course.sessions} sessions
+                    {course.sessions} sessions
                   </p>
                 </div>
               ))}
@@ -184,7 +184,7 @@ export default function StudentDashboard() {
                 <div key={i} className="flex items-center justify-between py-2 border-b last:border-0">
                   <div>
                     <p className="font-medium">{record.course}</p>
-                    <p className="text-xs text-muted-foreground">{record.date}</p>
+                    <p className="text-xs text-muted-foreground">{record.session}</p>
                   </div>
                   <span
                     className={`text-sm font-semibold ${

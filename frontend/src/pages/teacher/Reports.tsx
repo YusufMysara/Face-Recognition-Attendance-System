@@ -28,7 +28,7 @@ interface AttendanceDetail {
   presentCount: number;
   percentage: number;
   sessions: {
-    date: string;
+    name: string;
     status: string;
   }[];
 }
@@ -37,6 +37,7 @@ export default function Reports() {
   const [courses, setCourses] = useState<Course[]>([]);
   const [selectedCourseId, setSelectedCourseId] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [hasSearched, setHasSearched] = useState(false);
   const [students, setStudents] = useState<Student[]>([]);
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [attendanceDetails, setAttendanceDetails] = useState<AttendanceDetail | null>(null);
@@ -65,17 +66,31 @@ export default function Reports() {
     if (!searchQuery.trim() || !selectedCourseId) return;
 
     setSearching(true);
+    setHasSearched(true);
     try {
-      // For now, we'll need to get all students and filter them
-      // In a real implementation, you'd want a search endpoint
-      // Since we don't have direct access to students enrolled in courses,
-      // we'll show a message that this feature needs backend support
+      const courseIdNum = parseInt(selectedCourseId);
 
-      toast.error("Student search feature requires additional backend endpoints. Please implement course enrollment queries.");
-      setStudents([]);
+      // Get all enrolled students for the selected course
+      const enrolledStudents = await coursesApi.getCourseStudents(courseIdNum);
+
+      // Filter students based on search query (name or email)
+      const filteredStudents = enrolledStudents.filter(student =>
+        student.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        student.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        student.id.toString().includes(searchQuery)
+      );
+
+      setStudents(filteredStudents);
+
+      if (filteredStudents.length === 0) {
+        toast.info(`No students found matching "${searchQuery}"`);
+      } else {
+        toast.success(`Found ${filteredStudents.length} student(s)`);
+      }
 
     } catch (err) {
       toast.error(handleApiError(err));
+      setStudents([]);
     } finally {
       setSearching(false);
     }
@@ -101,7 +116,7 @@ export default function Reports() {
         const attendanceData = await attendanceApi.getStudentAttendance(student.id);
 
         // Filter attendance records for this course
-        const courseAttendance = attendanceData.filter(record =>
+        const courseAttendance = attendanceData.history.filter((record: any) =>
           record.course_id === courseIdNum
         );
 
@@ -114,13 +129,13 @@ export default function Reports() {
           : 0;
 
         // Transform sessions data
-        const sessions = sessionsData.map(session => {
-          const attendanceRecord = courseAttendance.find(att =>
+        const sessions = sessionsData.map((session, index) => {
+          const attendanceRecord = courseAttendance.find((att: any) =>
             att.session_id === session.id
           );
 
           return {
-            date: new Date(session.started_at).toLocaleDateString(),
+            name: `Session ${index + 1}`,
             status: attendanceRecord?.status === "present" ? "Present" : "Absent"
           };
         });
@@ -166,7 +181,14 @@ export default function Reports() {
               <label className="text-sm font-medium mb-2 block">Select Course</label>
               <Select
                 value={selectedCourseId}
-                onValueChange={setSelectedCourseId}
+                onValueChange={(value) => {
+                  setSelectedCourseId(value);
+                  setStudents([]);
+                  setSelectedStudent(null);
+                  setAttendanceDetails(null);
+                  setHasSearched(false);
+                  setSearchQuery("");
+                }}
                 disabled={coursesLoading}
               >
                 <SelectTrigger className="rounded-xl">
@@ -202,7 +224,7 @@ export default function Reports() {
             <div className="space-y-2">
               {students.length === 0 ? (
                 <p className="text-center text-muted-foreground py-8">
-                  {searchQuery ? "No students found" : "Select course and search"}
+                  {hasSearched ? "No students found matching your search" : "Select course and enter search query"}
                 </p>
               ) : (
                 students.map((student) => (
@@ -230,14 +252,9 @@ export default function Reports() {
             <Card className="p-8 rounded-xl shadow-md text-center">
               <Users className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
               <h3 className="text-xl font-semibold mb-2">No Student Selected</h3>
-              <p className="text-muted-foreground mb-4">
+              <p className="text-muted-foreground">
                 Select a course, search and select a student to view their attendance report
               </p>
-              <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-                <p className="text-sm text-yellow-800">
-                  <strong>Note:</strong> Student search functionality requires additional backend endpoints for course enrollment queries. Currently showing placeholder implementation.
-                </p>
-              </div>
             </Card>
           ) : loading ? (
             <Card className="p-8 rounded-xl shadow-md text-center">
@@ -292,14 +309,14 @@ export default function Reports() {
 
               {attendanceDetails && attendanceDetails.sessions.length > 0 && (
                 <Card className="p-6 rounded-xl shadow-md">
-                  <h3 className="text-xl font-semibold mb-4">Session-by-Session Attendance</h3>
+                  <h3 className="text-xl font-semibold mb-4">Sessions</h3>
                   <div className="space-y-2">
                     {attendanceDetails.sessions.map((session, i) => (
                       <div
                         key={i}
                         className="flex items-center justify-between p-3 rounded-lg bg-muted"
                       >
-                        <span className="text-sm">{session.date}</span>
+                        <span className="text-sm">{session.name}</span>
                         <Badge
                           variant={session.status === "Present" ? "default" : "destructive"}
                         >

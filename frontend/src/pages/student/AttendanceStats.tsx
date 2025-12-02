@@ -131,8 +131,16 @@ export default function AttendanceStats() {
             <Card key={course.id} className="p-6 rounded-xl shadow-md">
               <div className="flex items-start justify-between mb-4">
                 <div>
-                  <h3 className="text-lg font-semibold mb-1">{course.name}</h3>
-                  <p className="text-sm text-muted-foreground">Course ID: {course.id}</p>
+                  <h3
+                    className="mb-2"
+                    style={{
+                      fontSize: '1.875rem',
+                      lineHeight: '2.75rem',
+                      fontWeight: '500'
+                    }}
+                  >
+                    {course.name}
+                  </h3>
                 </div>
                 <div className="text-right">
                   <p className="text-3xl font-bold text-primary">{course.percentage}%</p>

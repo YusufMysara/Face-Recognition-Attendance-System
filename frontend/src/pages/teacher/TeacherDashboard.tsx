@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { StatsCard } from "@/components/shared/StatsCard";
 import { BookOpen, Users, Calendar, TrendingUp, Loader2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
@@ -8,13 +9,15 @@ import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 
 interface RecentSession {
+  id: number;
   course_name: string;
-  date: string;
+  session_name: string;
   attendance_percentage: number;
 }
 
 export default function TeacherDashboard() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [stats, setStats] = useState({
     coursesTaught: 0,
     totalStudents: 0,
@@ -69,6 +72,9 @@ export default function TeacherDashboard() {
           .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())
           .slice(0, 3);
 
+        // Create a map to track session numbers per course
+        const courseSessionNumbers = new Map();
+
         for (const session of recentSessionsForCourse) {
           try {
             const attendance = await attendanceApi.getSessionAttendance(session.id);
@@ -76,9 +82,15 @@ export default function TeacherDashboard() {
             const totalCount = attendance.length;
             const percentage = totalCount > 0 ? Math.round((presentCount / totalCount) * 100) : 0;
 
+            // Get session number for this course
+            const currentNumber = courseSessionNumbers.get(course.id) || 0;
+            const sessionNumber = currentNumber + 1;
+            courseSessionNumbers.set(course.id, sessionNumber);
+
             allSessions.push({
+              id: session.id,
               course_name: course.name,
-              date: new Date(session.started_at).toLocaleDateString(),
+              session_name: `Session ${sessionNumber}`,
               attendance_percentage: percentage
             });
           } catch (err) {
@@ -88,9 +100,9 @@ export default function TeacherDashboard() {
         }
       }
 
-      // Sort and take the 5 most recent sessions
+      // Sort by session ID (descending) and take the 5 most recent sessions
       const sortedSessions = allSessions
-        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        .sort((a, b) => b.id - a.id)
         .slice(0, 5);
 
       setStats({
@@ -106,6 +118,10 @@ export default function TeacherDashboard() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSessionClick = (sessionId: number) => {
+    navigate(`/teacher/session/${sessionId}`);
   };
 
   const displayStats = [
@@ -165,10 +181,14 @@ export default function TeacherDashboard() {
           ) : (
             <div className="space-y-4">
               {recentSessions.map((session, i) => (
-                <div key={i} className="flex items-center justify-between py-2 border-b last:border-0">
+                <div
+                  key={i}
+                  className="flex items-center justify-between py-2 border-b last:border-0 cursor-pointer hover:bg-muted/50 rounded px-2 -mx-2 transition-colors"
+                  onClick={() => handleSessionClick(session.id)}
+                >
                   <div>
                     <p className="font-medium">{session.course_name}</p>
-                    <p className="text-xs text-muted-foreground">{session.date}</p>
+                    <p className="text-xs text-muted-foreground">{session.session_name}</p>
                   </div>
                   <span className="font-semibold text-primary">{session.attendance_percentage}%</span>
                 </div>

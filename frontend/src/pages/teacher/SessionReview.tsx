@@ -4,7 +4,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { CheckCircle2, XCircle, Loader2 } from "lucide-react";
+import { CheckCircle2, XCircle, Loader2, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { attendanceApi, coursesApi, sessionsApi, handleApiError } from "@/lib/api";
 
@@ -49,9 +49,6 @@ export default function SessionReview() {
 
       const sessionIdNum = parseInt(sessionId);
 
-      // Get attendance records for this session
-      const attendanceData = await attendanceApi.getSessionAttendance(sessionIdNum);
-
       // Get session data to find course_id
       const sessionData = await sessionsApi.get(sessionIdNum);
 
@@ -61,15 +58,30 @@ export default function SessionReview() {
         courseData = await coursesApi.get(sessionData.course_id);
       }
 
-      // Transform attendance data to our interface
-      const studentsData: StudentAttendance[] = attendanceData.map(attendance => ({
-        id: attendance.student_id,
-        name: attendance.student_name || `Student ${attendance.student_id}`,
-        email: attendance.student_email || "",
-        attendance_id: attendance.id,
-        status: attendance.status,
-        marked_at: attendance.marked_at
-      }));
+      // Get all enrolled students in the course
+      const enrolledStudents = await coursesApi.getCourseStudents(sessionData.course_id);
+
+      // Get existing attendance records for this session
+      const attendanceData = await attendanceApi.getSessionAttendance(sessionIdNum);
+
+      // Create a map of attendance records by student_id for quick lookup
+      const attendanceMap = new Map();
+      attendanceData.forEach(attendance => {
+        attendanceMap.set(attendance.student_id, attendance);
+      });
+
+      // Transform data to show all enrolled students with their attendance status
+      const studentsData: StudentAttendance[] = enrolledStudents.map(student => {
+        const attendanceRecord = attendanceMap.get(student.id);
+        return {
+          id: student.id,
+          name: student.name,
+          email: student.email,
+          attendance_id: attendanceRecord?.id,
+          status: attendanceRecord ? attendanceRecord.status : "absent",
+          marked_at: attendanceRecord?.timestamp
+        };
+      });
 
       setCourse(courseData);
       setStudents(studentsData);
@@ -81,12 +93,48 @@ export default function SessionReview() {
     }
   };
 
-  const toggleAttendance = (studentId: number) => {
-    setStudents(students.map(s =>
-      s.id === studentId
-        ? { ...s, status: s.status === "present" ? "absent" : "present" }
-        : s
-    ));
+  const toggleAttendance = async (studentId: number) => {
+    if (!sessionId) return;
+
+    const student = students.find(s => s.id === studentId);
+    if (!student) return;
+
+    const newStatus = student.status === "present" ? "absent" : "present";
+    const sessionIdNum = parseInt(sessionId);
+
+    try {
+      let result;
+      if (student.attendance_id) {
+        // Update existing record
+        result = await attendanceApi.edit(student.attendance_id, newStatus);
+      } else {
+        // Create new record for students without attendance
+        result = await attendanceApi.createManual(sessionIdNum, studentId, newStatus);
+      }
+
+      // Update local state
+      setStudents(students.map(s =>
+        s.id === studentId
+          ? {
+              ...s,
+              status: newStatus,
+              attendance_id: result.id,
+              marked_at: result.timestamp
+            }
+          : s
+      ));
+
+      toast.success(`Marked ${student.name} as ${newStatus}`);
+    } catch (err) {
+      toast.error(handleApiError(err));
+    }
+  };
+
+  const handleRetake = () => {
+    if (!sessionId) return;
+
+    // Navigate back to live camera with the session_id to continue the session
+    navigate(`/teacher/camera?session_id=${sessionId}`);
   };
 
   const handleSubmit = async () => {
@@ -95,17 +143,9 @@ export default function SessionReview() {
     try {
       setSubmitting(true);
 
-      // Submit attendance changes to backend
       const sessionIdNum = parseInt(sessionId);
 
-      // For each student, update their attendance status
-      for (const student of students) {
-        if (student.attendance_id) {
-          await attendanceApi.edit(student.attendance_id, student.status);
-        }
-      }
-
-      // Submit/finalize the session
+      // Submit/finalize the session (ensures all enrolled students have attendance records)
       await sessionsApi.submit(sessionIdNum);
 
       toast.success("Attendance submitted successfully");
@@ -168,21 +208,33 @@ export default function SessionReview() {
               {((presentCount / totalCount) * 100).toFixed(1)}% attendance rate
             </p>
           </div>
-          <Button
-            size="lg"
-            className="rounded-xl"
-            onClick={handleSubmit}
-            disabled={submitting}
-          >
-            {submitting ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Submitting...
-              </>
-            ) : (
-              "Submit Attendance"
-            )}
-          </Button>
+          <div className="flex gap-3">
+            <Button
+              size="lg"
+              variant="outline"
+              className="rounded-xl"
+              onClick={handleRetake}
+              disabled={submitting}
+            >
+              <RotateCcw className="w-4 h-4 mr-2" />
+              Retake
+            </Button>
+            <Button
+              size="lg"
+              className="rounded-xl"
+              onClick={handleSubmit}
+              disabled={submitting}
+            >
+              {submitting ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Submitting...
+                </>
+              ) : (
+                "Submit Attendance"
+              )}
+            </Button>
+          </div>
         </div>
       </Card>
 

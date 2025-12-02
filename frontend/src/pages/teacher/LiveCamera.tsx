@@ -28,8 +28,8 @@ interface Session {
 interface DetectedStudent {
   id: number;
   name: string;
-  confidence: number;
-  status: "pending" | "verified";
+  timestamp: string;
+  status: "detected";
 }
 
 export default function LiveCamera() {
@@ -95,10 +95,41 @@ export default function LiveCamera() {
     setError(null);
     try {
       if (sessionId) {
-        // For now, we can't get a single session directly from the API
-        // We'll navigate to session review if we have a session_id
+        // Load existing session data to resume it
         const sessionIdNum = parseInt(sessionId);
-        navigate(`/teacher/session/${sessionIdNum}/review`);
+        let sessionData = await sessionsApi.get(sessionIdNum);
+
+        // Check if session is submitted (can't reopen submitted sessions)
+        if (sessionData.status === "submitted") {
+          toast.error("This session has already been submitted");
+          navigate(`/teacher/session/${sessionIdNum}/review`);
+          return;
+        }
+
+        // If session is closed, retake it (clears all attendance and reopens)
+        if (sessionData.status === "closed") {
+          console.log("Retaking closed session - clearing attendance and reopening");
+          await attendanceApi.retake(sessionIdNum);
+          // Reload session data after retake
+          sessionData = await sessionsApi.get(sessionIdNum);
+          toast.success("Session reopened for retake - all attendance cleared");
+        }
+
+        console.log("Resuming session:", sessionData);
+        setCurrentSession(sessionData);
+
+        // Load course data for the session
+        if (sessionData.course_id) {
+          const courseData = await coursesApi.get(sessionData.course_id);
+          // Find the course in our loaded courses or add it
+          setCourses(prevCourses => {
+            const existing = prevCourses.find(c => c.id === courseData.id);
+            if (!existing) {
+              return [...prevCourses, courseData];
+            }
+            return prevCourses;
+          });
+        }
       }
     } catch (err) {
       setError(handleApiError(err));
@@ -244,13 +275,33 @@ export default function LiveCamera() {
       if (!blob) return;
 
       try {
-        await attendanceApi.mark(currentSession.id, blob);
-        // In a real implementation, you'd get recognition results back
-        // For now, we'll just show a success message
-        toast.success("Face detected and attendance marked");
+        const response = await attendanceApi.mark(currentSession.id, blob);
+        console.log("Recognition response:", response);
+
+        // Process the detected students from the response
+        if (response.attendance && response.attendance.length > 0) {
+          const newDetections: DetectedStudent[] = response.attendance.map((attendance: any) => ({
+            id: attendance.student_id,
+            name: attendance.student_name || `Student ${attendance.student_id}`,
+            timestamp: attendance.timestamp || new Date().toISOString(),
+            status: "detected" as const,
+          }));
+
+          // Add new detections to the list, avoiding duplicates
+          setDetectedStudents(prev => {
+            const existingIds = new Set(prev.map(s => s.id));
+            const uniqueNewDetections = newDetections.filter(s => !existingIds.has(s.id));
+            return [...prev, ...uniqueNewDetections].slice(-10); // Keep last 10 detections
+          });
+
+          // Show success message with number of detections
+          if (newDetections.length > 0) {
+            toast.success(`${newDetections.length} student(s) detected and marked present`);
+          }
+        }
       } catch (err) {
         console.error("Recognition error:", err);
-        // Don't show error toast for every failed recognition
+        // Don't show error toast for every failed recognition attempt
       }
     }, 'image/jpeg', 0.8);
   };
@@ -498,19 +549,25 @@ export default function LiveCamera() {
                 </div>
                 <p className="text-xs text-green-600">
                   Camera is active and detecting faces every 3 seconds
+                  {detectedStudents.length > 0 && ` • ${detectedStudents.length} student(s) detected`}
                 </p>
               </div>
 
               {detectedStudents.length > 0 && (
                 <div className="space-y-2">
                   <h3 className="text-sm font-medium">Recent Detections:</h3>
-                  {detectedStudents.slice(-3).map((student, i) => (
-                    <div key={i} className="p-2 rounded bg-muted text-sm">
-                      <div className="flex justify-between">
-                        <span>Student detected</span>
-                        <Badge variant="default" className="text-xs">
-                          {student.confidence}%
-                        </Badge>
+                  {detectedStudents.slice(-5).map((student, i) => (
+                    <div key={`${student.id}-${student.timestamp}`} className="p-2 rounded bg-muted text-sm">
+                      <div className="flex justify-between items-center">
+                        <span className="font-medium">{student.name}</span>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="default" className="text-xs">
+                            Detected
+                          </Badge>
+                          <span className="text-xs text-muted-foreground">
+                            {new Date(student.timestamp).toLocaleTimeString()}
+                          </span>
+                        </div>
                       </div>
                     </div>
                   ))}

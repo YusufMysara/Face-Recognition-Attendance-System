@@ -164,15 +164,38 @@ def get_student_attendance(
         raise HTTPException(status_code=404, detail="Student not found")
 
     records_with_names = (
-        db.query(AttendanceModel, User.name, Course.name, SessionModel.course_id)
+        db.query(AttendanceModel, User.name, Course.name, SessionModel.course_id, SessionModel.started_at)
         .join(User, AttendanceModel.student_id == User.id)
         .join(SessionModel, AttendanceModel.session_id == SessionModel.id)
         .join(Course, SessionModel.course_id == Course.id)
         .filter(AttendanceModel.student_id == student_id)
+        .order_by(AttendanceModel.timestamp.desc())
         .all()
     )
-    history = [
-        {
+
+    # Create session names per course
+    course_session_counts = {}
+    history = []
+    for record, student_name, course_name, course_id, session_started_at in records_with_names:
+        if course_id not in course_session_counts:
+            course_session_counts[course_id] = {}
+
+        # Get all sessions for this course ordered by date
+        if course_id not in course_session_counts or 'sessions' not in course_session_counts[course_id]:
+            course_sessions = (
+                db.query(SessionModel)
+                .filter(SessionModel.course_id == course_id)
+                .order_by(SessionModel.started_at.asc())
+                .all()
+            )
+            course_session_counts[course_id] = {
+                'sessions': course_sessions,
+                'session_map': {s.id: i + 1 for i, s in enumerate(course_sessions)}
+            }
+
+        session_number = course_session_counts[course_id]['session_map'].get(record.session_id, 1)
+
+        history.append({
             "id": record.id,
             "session_id": record.session_id,
             "student_id": record.student_id,
@@ -181,10 +204,9 @@ def get_student_attendance(
             "student_name": student_name,
             "course_id": course_id,
             "course_name": course_name,
-        }
-        for record, student_name, course_name, course_id in records_with_names
-    ]
-    records = [record for record, _, _, _ in records_with_names]
+            "session_name": f"Session {session_number}",
+        })
+    records = [record for record, _, _, _, _ in records_with_names]
 
     course_totals: Dict[int, Dict[str, int]] = defaultdict(lambda: {"present": 0, "total": 0})
     for session in db.query(SessionModel).all():
@@ -270,3 +292,63 @@ def get_all_attendance(
         }
         for record, student_name, course_name in records
     ]
+
+
+@router.post("/manual", response_model=AttendanceResponse)
+def create_manual_attendance(
+    session_id: int = Form(...),
+    student_id: int = Form(...),
+    status: str = Form(...),
+    current_user: User = Depends(require_role("teacher")),
+    db: Session = Depends(get_db),
+):
+    """Manually create or update attendance record for review purposes"""
+    session = _get_session(session_id, db)
+    if session.status == "submitted":
+        raise HTTPException(status_code=400, detail="Cannot modify attendance for a submitted session")
+    _ensure_teacher_session(session, current_user.id)
+
+    # Check if student is enrolled in the course
+    enrollment = (
+        db.query(StudentCourse)
+        .filter(
+            StudentCourse.course_id == session.course_id,
+            StudentCourse.student_id == student_id,
+        )
+        .first()
+    )
+    if not enrollment:
+        raise HTTPException(status_code=400, detail="Student not enrolled in this course")
+
+    # Check if attendance record already exists
+    existing_record = (
+        db.query(AttendanceModel)
+        .filter(
+            AttendanceModel.session_id == session_id,
+            AttendanceModel.student_id == student_id,
+        )
+        .first()
+    )
+
+    if existing_record:
+        # Update existing record
+        existing_record.status = status
+        record = existing_record
+    else:
+        # Create new record
+        record = AttendanceModel(
+            session_id=session_id,
+            student_id=student_id,
+            status=status,
+        )
+        db.add(record)
+
+    db.commit()
+    db.refresh(record)
+
+    # Get student name
+    student_name = (
+        db.query(User.name).filter(User.id == student_id).scalar()
+    )
+
+    return _to_response(record, student_name)

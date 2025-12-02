@@ -12,8 +12,9 @@ interface AttendanceRecord {
   session_id: number;
   course_id: number;
   status: "present" | "absent";
-  marked_at: string;
+  timestamp: string;
   course_name?: string;
+  session_name?: string;
 }
 
 export default function AttendanceHistory() {
@@ -51,12 +52,16 @@ export default function AttendanceHistory() {
       accessor: (row) => row.course_name || `Course ${row.course_id}`
     },
     {
-      header: "Date",
-      accessor: (row) => new Date(row.marked_at).toLocaleDateString()
+      header: "Session",
+      accessor: (row) => row.session_name || 'Session'
     },
     {
-      header: "Time",
-      accessor: (row) => new Date(row.marked_at).toLocaleTimeString()
+      header: "Date",
+      accessor: (row) => new Date(row.timestamp).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      })
     },
     {
       header: "Status",

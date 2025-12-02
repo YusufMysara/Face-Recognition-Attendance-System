@@ -313,12 +313,6 @@ export const sessionsApi = {
     return response.json();
   },
 
-  get: async (sessionId: number) => {
-    const response = await fetchWithAuth(`/sessions/${sessionId}`);
-    if (!response.ok) throw new Error("Failed to fetch session");
-    return response.json();
-  },
-
   delete: async (sessionId: number) => {
     const response = await fetchWithAuth(`/sessions/${sessionId}`, {
       method: "DELETE",
@@ -392,6 +386,28 @@ export const attendanceApi = {
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: "Failed to retake attendance" }));
       throw new Error(error.detail || "Failed to retake attendance");
+    }
+    return response.json();
+  },
+
+  createManual: async (sessionId: number, studentId: number, status: string) => {
+    const formData = new FormData();
+    formData.append("session_id", String(sessionId));
+    formData.append("student_id", String(studentId));
+    formData.append("status", status);
+
+    const token = getToken();
+    const response = await fetch(`${BASE_URL}/attendance/manual`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: "Failed to create manual attendance" }));
+      throw new Error(error.detail || "Failed to create manual attendance");
     }
     return response.json();
   },
