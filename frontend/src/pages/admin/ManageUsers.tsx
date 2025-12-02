@@ -83,6 +83,12 @@ export default function ManageUsers() {
       setFormLoading(true);
 
       if (formMode === "create") {
+        // Validation: Fail creation if student and no image added
+        if (data.role === "student" && (!data.photos || data.photos.length === 0)) {
+          toast.error("An image is required to create a student user.");
+          return;
+        }
+
         const payload = {
           name: data.name,
           email: data.email,

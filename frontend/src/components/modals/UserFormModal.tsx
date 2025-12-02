@@ -157,7 +157,7 @@ export function UserFormModal({
 
           {role === "Student" && mode === "create" && (
             <div className="space-y-2">
-              <Label htmlFor="photos">Photos (optional)</Label>
+              <Label htmlFor="photos">Student Photo</Label>
               <Input
                 id="photos"
                 type="file"
