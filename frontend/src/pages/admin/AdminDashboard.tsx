@@ -67,26 +67,17 @@ export default function AdminDashboard() {
     {
       title: "Total Students",
       value: stats.totalStudents.toString(),
-      icon: Users,
-      trend: { value: "0%", isPositive: true }
+      icon: Users
     },
     {
       title: "Total Teachers",
       value: stats.totalTeachers.toString(),
-      icon: Users,
-      trend: { value: "0%", isPositive: true }
+      icon: Users
     },
     {
       title: "Total Courses",
       value: stats.totalCourses.toString(),
-      icon: BookOpen,
-      trend: { value: "0%", isPositive: true }
-    },
-    {
-      title: "Active Sessions",
-      value: stats.activeSessions.toString(),
-      icon: Calendar,
-      trend: { value: "0%", isPositive: true }
+      icon: BookOpen
     },
   ];
 
@@ -125,7 +116,7 @@ export default function AdminDashboard() {
         <p className="text-muted-foreground">Welcome back! Here's your system overview.</p>
       </div>
 
-      <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+      <div className="grid md:grid-cols-3 gap-6 mb-8">
         {displayStats.map((stat) => (
           <StatsCard key={stat.title} {...stat} />
         ))}
