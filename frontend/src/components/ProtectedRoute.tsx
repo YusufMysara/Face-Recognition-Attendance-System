@@ -1,21 +1,32 @@
-import { Navigate, Outlet } from "react-router-dom";
+import { Navigate } from "react-router-dom";
+import { useAuth } from "@/context/AuthContext";
 
-import { useAuth } from "../hooks/useAuth";
-
-interface Props {
-  roles?: Array<"admin" | "teacher" | "student">;
+interface ProtectedRouteProps {
+  children: React.ReactNode;
+  roles?: ("admin" | "teacher" | "student")[];
 }
 
-const ProtectedRoute = ({ roles }: Props) => {
-  const { user } = useAuth();
+export function ProtectedRoute({ children, roles }: ProtectedRouteProps) {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-muted-foreground">Loading...</div>
+      </div>
+    );
+  }
+
   if (!user) {
     return <Navigate to="/login" replace />;
   }
-  if (roles && !roles.includes(user.role)) {
-    return <Navigate to="/" replace />;
-  }
-  return <Outlet />;
-};
 
-export default ProtectedRoute;
+  if (roles && !roles.includes(user.role)) {
+    // Redirect to their role's dashboard if they don't have access
+    return <Navigate to={`/${user.role}/dashboard`} replace />;
+  }
+
+  return <>{children}</>;
+}
+
 

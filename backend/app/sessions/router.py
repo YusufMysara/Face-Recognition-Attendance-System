@@ -23,6 +23,18 @@ def _ensure_teacher_course(teacher: User, course_id: int, db: Session):
     return course
 
 
+def _get_session(session_id: int, db: Session):
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session
+
+
+def _ensure_teacher_session(session: SessionModel, teacher_id: int):
+    if session.teacher_id != teacher_id:
+        raise HTTPException(status_code=403, detail="Not your session")
+
+
 @router.post("/start", response_model=SessionResponse)
 def start_session(
     payload: SessionCreate,
@@ -118,8 +130,6 @@ def delete_session(
         raise HTTPException(status_code=404, detail="Session not found")
     if session.teacher_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not your session")
-    if session.status == "submitted":
-        raise HTTPException(status_code=400, detail="Cannot delete a submitted session")
     (
         db.query(Attendance)
         .filter(Attendance.session_id == session_id)
@@ -128,6 +138,31 @@ def delete_session(
     db.delete(session)
     db.commit()
     return {"detail": "Session deleted"}
+
+
+@router.get("/{session_id}", response_model=SessionResponse)
+def get_session(
+    session_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get a single session by ID"""
+    session = _get_session(session_id, db)
+    if current_user.role == "teacher":
+        _ensure_teacher_session(session, current_user.id)
+    elif current_user.role == "student":
+        enrollment = (
+            db.query(StudentCourse)
+            .filter(
+                StudentCourse.course_id == session.course_id,
+                StudentCourse.student_id == current_user.id,
+            )
+            .first()
+        )
+        if not enrollment:
+            raise HTTPException(status_code=403, detail="Not enrolled in course")
+
+    return SessionResponse.from_orm(session)
 
 
 @router.get("/course/{course_id}", response_model=List[SessionResponse])

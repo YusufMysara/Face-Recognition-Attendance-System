@@ -1,58 +1,251 @@
-import { Link, Navigate, Route, Routes } from "react-router-dom";
+import { Toaster } from "@/components/ui/toaster";
+import { Toaster as Sonner } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { AuthProvider } from "@/context/AuthContext";
+import { ProtectedRoute } from "@/components/ProtectedRoute";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 
-import ProtectedRoute from "./components/ProtectedRoute";
-import { useAuth } from "./hooks/useAuth";
-import AdminDashboard from "./pages/AdminDashboard";
-import LoginPage from "./pages/Login";
-import StudentDashboard from "./pages/StudentDashboard";
-import TeacherDashboard from "./pages/TeacherDashboard";
+// Public pages
+import Landing from "./pages/Landing";
+import Login from "./pages/Login";
+import NotFound from "./pages/NotFound";
 
-const App = () => {
-  const { user, logout } = useAuth();
+// Admin pages
+import AdminDashboard from "./pages/admin/AdminDashboard";
+import ManageUsers from "./pages/admin/ManageUsers";
+import ManageCourses from "./pages/admin/ManageCourses";
+import AdminCourseDetails from "./pages/admin/CourseDetails";
+import UploadPhotos from "./pages/admin/UploadPhotos";
+import AttendanceRecords from "./pages/admin/AttendanceRecords";
 
-  return (
-    <div className="app">
-      <header style={{ padding: "1rem", display: "flex", justifyContent: "space-between" }}>
-        <h1>Face Recognition Attendance</h1>
-        <nav style={{ display: "flex", gap: "1rem", alignItems: "center" }}>
-          {user && (
-            <>
-              <Link to={`/${user.role}`}>Dashboard</Link>
-              <button onClick={logout}>Logout</button>
-            </>
-          )}
-        </nav>
-      </header>
+// Teacher pages
+import TeacherDashboard from "./pages/teacher/TeacherDashboard";
+import Courses from "./pages/teacher/Courses";
+import TeacherCourseDetails from "./pages/teacher/CourseDetails";
+import LiveCamera from "./pages/teacher/LiveCamera";
+import SessionReview from "./pages/teacher/SessionReview";
+import SessionDetails from "./pages/teacher/SessionDetails";
+import AttendanceLog from "./pages/teacher/AttendanceLog";
+import Reports from "./pages/teacher/Reports";
 
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
+// Student pages
+import StudentDashboard from "./pages/student/StudentDashboard";
+import AttendanceStats from "./pages/student/AttendanceStats";
+import AttendanceHistory from "./pages/student/AttendanceHistory";
 
-        <Route element={<ProtectedRoute roles={["admin"]} />}>
-          <Route path="/admin" element={<AdminDashboard />} />
-        </Route>
+const queryClient = new QueryClient();
 
-        <Route element={<ProtectedRoute roles={["teacher"]} />}>
-          <Route path="/teacher" element={<TeacherDashboard />} />
-        </Route>
+const App = () => (
+  <QueryClientProvider client={queryClient}>
+    <TooltipProvider>
+      <Toaster />
+      <Sonner />
+      <BrowserRouter>
+        <AuthProvider>
+          <Routes>
+            {/* Public Routes */}
+            <Route path="/" element={<Landing />} />
+            <Route path="/login" element={<Login />} />
 
-        <Route element={<ProtectedRoute roles={["student"]} />}>
-          <Route path="/student" element={<StudentDashboard />} />
-        </Route>
+            {/* Admin Routes */}
+            <Route
+              path="/admin/dashboard"
+              element={
+                <ProtectedRoute roles={["admin"]}>
+                  <DashboardLayout role="admin">
+                    <AdminDashboard />
+                  </DashboardLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/users"
+              element={
+                <ProtectedRoute roles={["admin"]}>
+                  <DashboardLayout role="admin">
+                    <ManageUsers />
+                  </DashboardLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/courses"
+              element={
+                <ProtectedRoute roles={["admin"]}>
+                  <DashboardLayout role="admin">
+                    <ManageCourses />
+                  </DashboardLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/course/:courseId"
+              element={
+                <ProtectedRoute roles={["admin"]}>
+                  <DashboardLayout role="admin">
+                    <AdminCourseDetails />
+                  </DashboardLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/upload-photos"
+              element={
+                <ProtectedRoute roles={["admin"]}>
+                  <DashboardLayout role="admin">
+                    <UploadPhotos />
+                  </DashboardLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/attendance"
+              element={
+                <ProtectedRoute roles={["admin"]}>
+                  <DashboardLayout role="admin">
+                    <AttendanceRecords />
+                  </DashboardLayout>
+                </ProtectedRoute>
+              }
+            />
 
-        <Route
-          path="/"
-          element={
-            user ? (
-              <Navigate to={`/${user.role}`} replace />
-            ) : (
-              <Navigate to="/login" replace />
-            )
-          }
-        />
-      </Routes>
-    </div>
-  );
-};
+            {/* Teacher Routes */}
+            <Route
+              path="/teacher/dashboard"
+              element={
+                <ProtectedRoute roles={["teacher"]}>
+                  <DashboardLayout role="teacher">
+                    <TeacherDashboard />
+                  </DashboardLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/teacher/courses"
+              element={
+                <ProtectedRoute roles={["teacher"]}>
+                  <DashboardLayout role="teacher">
+                    <Courses />
+                  </DashboardLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/teacher/course/:courseId"
+              element={
+                <ProtectedRoute roles={["teacher"]}>
+                  <DashboardLayout role="teacher">
+                    <TeacherCourseDetails />
+                  </DashboardLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/teacher/camera"
+              element={
+                <ProtectedRoute roles={["teacher"]}>
+                  <DashboardLayout role="teacher">
+                    <LiveCamera />
+                  </DashboardLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/teacher/session/:sessionId/review"
+              element={
+                <ProtectedRoute roles={["teacher"]}>
+                  <DashboardLayout role="teacher">
+                    <SessionReview />
+                  </DashboardLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/teacher/session/:sessionId"
+              element={
+                <ProtectedRoute roles={["teacher"]}>
+                  <DashboardLayout role="teacher">
+                    <SessionDetails />
+                  </DashboardLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/teacher/attendance-log"
+              element={
+                <ProtectedRoute roles={["teacher"]}>
+                  <DashboardLayout role="teacher">
+                    <AttendanceLog />
+                  </DashboardLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/teacher/reports"
+              element={
+                <ProtectedRoute roles={["teacher"]}>
+                  <DashboardLayout role="teacher">
+                    <Reports />
+                  </DashboardLayout>
+                </ProtectedRoute>
+              }
+            />
+
+            {/* Student Routes */}
+            <Route
+              path="/student/dashboard"
+              element={
+                <ProtectedRoute roles={["student"]}>
+                  <DashboardLayout role="student">
+                    <StudentDashboard />
+                  </DashboardLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/student/stats"
+              element={
+                <ProtectedRoute roles={["student"]}>
+                  <DashboardLayout role="student">
+                    <AttendanceStats />
+                  </DashboardLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/student/history"
+              element={
+                <ProtectedRoute roles={["student"]}>
+                  <DashboardLayout role="student">
+                    <AttendanceHistory />
+                  </DashboardLayout>
+                </ProtectedRoute>
+              }
+            />
+
+            {/* Redirects */}
+            <Route
+              path="/admin"
+              element={<Navigate to="/admin/dashboard" replace />}
+            />
+            <Route
+              path="/teacher"
+              element={<Navigate to="/teacher/dashboard" replace />}
+            />
+            <Route
+              path="/student"
+              element={<Navigate to="/student/dashboard" replace />}
+            />
+
+            {/* 404 */}
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </AuthProvider>
+      </BrowserRouter>
+    </TooltipProvider>
+  </QueryClientProvider>
+);
 
 export default App;
-

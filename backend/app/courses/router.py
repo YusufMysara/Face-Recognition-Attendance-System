@@ -166,6 +166,31 @@ def assign_student(
     return {"detail": "Student assigned"}
 
 
+@router.post("/remove-student")
+def remove_student(
+    payload: CourseAssignment,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_role("admin")),
+):
+    student = db.query(User).filter(User.id == payload.student_id, User.role == "student").first()
+    course = db.query(Course).filter(Course.id == payload.course_id).first()
+    if not student or not course:
+        raise HTTPException(status_code=404, detail="Invalid student or course")
+    link = (
+        db.query(StudentCourse)
+        .filter(
+            StudentCourse.student_id == payload.student_id,
+            StudentCourse.course_id == payload.course_id,
+        )
+        .first()
+    )
+    if not link:
+        raise HTTPException(status_code=400, detail="Student not assigned to course")
+    db.delete(link)
+    db.commit()
+    return {"detail": "Student removed from course"}
+
+
 @router.post("/assign-teacher")
 def assign_teacher(
     payload: TeacherAssignment,
@@ -180,3 +205,46 @@ def assign_teacher(
     db.commit()
     return {"detail": "Teacher assigned"}
 
+
+@router.get("/{course_id}/students")
+def get_course_students(
+    course_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get all students enrolled in a course"""
+    course = db.query(Course).filter(Course.id == course_id).first()
+    if not course:
+        raise HTTPException(status_code=404, detail="Course not found")
+
+    # Check permissions
+    if current_user.role == "teacher" and course.teacher_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not your course")
+    elif current_user.role == "student":
+        enrollment = (
+            db.query(StudentCourse)
+            .filter(
+                StudentCourse.course_id == course_id,
+                StudentCourse.student_id == current_user.id,
+            )
+            .first()
+        )
+        if not enrollment:
+            raise HTTPException(status_code=403, detail="Not enrolled")
+
+    enrolled_students = (
+        db.query(User)
+        .join(StudentCourse, User.id == StudentCourse.student_id)
+        .filter(StudentCourse.course_id == course_id)
+        .all()
+    )
+
+    return [
+        {
+            "id": student.id,
+            "name": student.name,
+            "email": student.email,
+            "group": student.group,
+        }
+        for student in enrolled_students
+    ]
