@@ -28,7 +28,7 @@ interface PhotoFile {
 export default function UploadPhotos() {
   const [selectedStudent, setSelectedStudent] = useState<string>("");
   const [students, setStudents] = useState<Student[]>([]);
-  const [photos, setPhotos] = useState<PhotoFile[]>([]);
+  const [photo, setPhoto] = useState<PhotoFile | null>(null);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -60,39 +60,41 @@ export default function UploadPhotos() {
     }
 
     const files = e.target.files;
-    if (files) {
+    if (files && files[0]) {
+      const file = files[0];
       const maxSize = 10 * 1024 * 1024; // 10MB
-      const validFiles: PhotoFile[] = [];
-      const invalidFiles: string[] = [];
 
-      Array.from(files).forEach((file) => {
-        if (!file.type.startsWith('image/')) {
-          invalidFiles.push(`${file.name} is not an image file`);
-        } else if (file.size > maxSize) {
-          invalidFiles.push(`${file.name} exceeds 10MB limit`);
-        } else {
-          validFiles.push({
-            file,
-            preview: URL.createObjectURL(file)
-          });
-        }
-      });
-
-      if (invalidFiles.length > 0) {
-        toast.error(`Invalid files: ${invalidFiles.join(', ')}`);
+      if (!file.type.startsWith('image/')) {
+        toast.error(`${file.name} is not an image file`);
+        return;
       }
 
-      if (validFiles.length > 0) {
-        setPhotos([...photos, ...validFiles]);
-        toast.success(`Added ${validFiles.length} photo(s)`);
+      if (file.size > maxSize) {
+        toast.error(`${file.name} exceeds 10MB limit`);
+        return;
       }
+
+      // Clean up previous photo preview URL if exists
+      if (photo) {
+        URL.revokeObjectURL(photo.preview);
+      }
+
+      const newPhoto: PhotoFile = {
+        file,
+        preview: URL.createObjectURL(file)
+      };
+
+      setPhoto(newPhoto);
+      toast.success("Photo selected successfully");
     }
   };
 
-  const removePhoto = (index: number) => {
+  const removePhoto = () => {
     // Clean up the preview URL to prevent memory leaks
-    URL.revokeObjectURL(photos[index].preview);
-    setPhotos(photos.filter((_, i) => i !== index));
+    if (photo) {
+      URL.revokeObjectURL(photo.preview);
+    }
+    setPhoto(null);
   };
 
   const handleUpload = async () => {
@@ -100,8 +102,8 @@ export default function UploadPhotos() {
       toast.error("Please select a student");
       return;
     }
-    if (photos.length === 0) {
-      toast.error("Please select photos to upload");
+    if (!photo) {
+      toast.error("Please select a photo to upload");
       return;
     }
 
@@ -109,18 +111,16 @@ export default function UploadPhotos() {
       setUploading(true);
       const studentId = parseInt(selectedStudent);
 
-      // Upload each photo
-      for (const photo of photos) {
-        await usersApi.uploadPhoto(studentId, photo.file);
-      }
+      // Upload the photo
+      await usersApi.uploadPhoto(studentId, photo.file);
 
-      toast.success(`${photos.length} photo(s) uploaded successfully and embeddings calculated`);
+      toast.success("Photo uploaded successfully and face embedding calculated");
 
-      // Clean up preview URLs
-      photos.forEach(photo => URL.revokeObjectURL(photo.preview));
+      // Clean up preview URL
+      URL.revokeObjectURL(photo.preview);
 
       // Reset form
-      setPhotos([]);
+      setPhoto(null);
       setSelectedStudent("");
     } catch (err) {
       toast.error(handleApiError(err));
@@ -129,12 +129,14 @@ export default function UploadPhotos() {
     }
   };
 
-  // Clean up preview URLs when component unmounts
+  // Clean up preview URL when component unmounts
   useEffect(() => {
     return () => {
-      photos.forEach(photo => URL.revokeObjectURL(photo.preview));
+      if (photo) {
+        URL.revokeObjectURL(photo.preview);
+      }
     };
-  }, [photos]);
+  }, [photo]);
 
   if (loading) {
     return (
@@ -200,7 +202,6 @@ export default function UploadPhotos() {
           >
             <input
               type="file"
-              multiple
               accept="image/*"
               onChange={handleFileChange}
               className="hidden"
@@ -214,11 +215,11 @@ export default function UploadPhotos() {
               <Upload className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
               <h3 className="text-lg font-semibold mb-2">
                 {selectedStudent
-                  ? "Drop files here or click to browse"
+                  ? "Drop photo here or click to browse"
                   : "Select a student first"}
               </h3>
               <p className="text-sm text-muted-foreground">
-                Supports: JPG, PNG, JPEG (Max 10MB each)
+                Supports: JPG, PNG, JPEG (Max 10MB)
               </p>
             </label>
           </div>
@@ -228,7 +229,7 @@ export default function UploadPhotos() {
               onClick={handleUpload}
               className="w-full rounded-xl"
               size="lg"
-              disabled={photos.length === 0 || !selectedStudent || uploading}
+              disabled={!photo || !selectedStudent || uploading}
             >
               {uploading ? (
                 <>
@@ -238,7 +239,7 @@ export default function UploadPhotos() {
               ) : (
                 <>
                   <Upload className="w-4 h-4 mr-2" />
-                  Upload {photos.length} Photo{photos.length !== 1 ? "s" : ""}
+                  Upload Photo
                 </>
               )}
             </Button>
@@ -246,30 +247,28 @@ export default function UploadPhotos() {
         </Card>
 
         <Card className="p-6 rounded-xl shadow-md">
-          <h2 className="text-xl font-semibold mb-4">Image Previews</h2>
-          {photos.length === 0 ? (
+          <h2 className="text-xl font-semibold mb-4">Image Preview</h2>
+          {!photo ? (
             <div className="text-center py-12 text-muted-foreground">
               <ImageIcon className="w-12 h-12 mx-auto mb-2 opacity-50" />
-              <p>No images selected</p>
+              <p>No image selected</p>
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-4 max-h-[500px] overflow-y-auto">
-              {photos.map((photo, index) => (
-                <div key={index} className="relative group">
-                  <img
-                    src={photo.preview}
-                    alt={`Preview ${index + 1}`}
-                    className="w-full h-32 object-cover rounded-lg"
-                  />
-                  <button
-                    onClick={() => removePhoto(index)}
-                    disabled={uploading}
-                    className="absolute top-2 right-2 bg-destructive text-destructive-foreground rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-50"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              ))}
+            <div className="flex justify-center">
+              <div className="relative group">
+                <img
+                  src={photo.preview}
+                  alt="Photo preview"
+                  className="max-w-full max-h-96 object-contain rounded-lg"
+                />
+                <button
+                  onClick={() => removePhoto()}
+                  disabled={uploading}
+                  className="absolute top-2 right-2 bg-destructive text-destructive-foreground rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-50"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
           )}
         </Card>

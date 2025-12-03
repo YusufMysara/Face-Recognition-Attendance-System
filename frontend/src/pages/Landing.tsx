@@ -43,15 +43,9 @@ export default function Landing() {
             Face Recognition
             <span className="text-primary block mt-2">Attendance System</span>
           </h1>
-          <p className="text-lg md:text-xl text-muted-foreground mb-8 animate-fade-in" style={{ animationDelay: "0.1s" }}>
-            Modern, automated attendance tracking powered by AI technology
-          </p>
           <div className="flex flex-wrap gap-4 justify-center animate-fade-in" style={{ animationDelay: "0.2s" }}>
             <Button size="lg" className="rounded-xl" onClick={() => navigate("/login")}>
               Get Started
-            </Button>
-            <Button size="lg" variant="outline" className="rounded-xl">
-              Learn More
             </Button>
           </div>
         </div>
@@ -127,12 +121,6 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* Footer */}
-      <footer className="border-t border-border py-8">
-        <div className="content-container text-center text-muted-foreground">
-          <p>© 2024 Face Recognition Attendance System. All rights reserved.</p>
-        </div>
-      </footer>
     </div>
   );
 }

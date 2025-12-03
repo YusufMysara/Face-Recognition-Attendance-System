@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { StatsCard } from "@/components/shared/StatsCard";
-import { Users, BookOpen, Calendar, TrendingUp, Loader2 } from "lucide-react";
+import { GraduationCap, UserCog, BookOpen, Calendar, TrendingUp, Loader2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { usersApi, coursesApi, handleApiError } from "@/lib/api";
@@ -67,12 +67,12 @@ export default function AdminDashboard() {
     {
       title: "Total Students",
       value: stats.totalStudents.toString(),
-      icon: Users
+      icon: GraduationCap
     },
     {
       title: "Total Teachers",
       value: stats.totalTeachers.toString(),
-      icon: Users
+      icon: UserCog
     },
     {
       title: "Total Courses",
@@ -127,8 +127,7 @@ export default function AdminDashboard() {
           <h2 className="text-xl font-semibold mb-4">Recent Activities</h2>
           <div className="space-y-4">
             <div className="text-center text-muted-foreground py-8">
-              <p>Activity logging not yet implemented</p>
-              <p className="text-xs mt-2">This feature requires additional backend endpoints</p>
+              <p>Coming Soon</p>
             </div>
           </div>
         </Card>
@@ -139,14 +138,14 @@ export default function AdminDashboard() {
             <Button
               variant="ghost"
               className="w-full justify-start p-3 h-auto rounded-lg"
-              onClick={() => navigate("/admin/users")}
+              onClick={() => navigate("/admin/users?create=true")}
             >
               Create New User
             </Button>
             <Button
               variant="ghost"
               className="w-full justify-start p-3 h-auto rounded-lg"
-              onClick={() => navigate("/admin/courses")}
+              onClick={() => navigate("/admin/courses?create=true")}
             >
               Add New Course
             </Button>

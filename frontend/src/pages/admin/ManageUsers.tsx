@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { DataTable, Column } from "@/components/shared/DataTable";
 import { Button } from "@/components/ui/button";
 import { Plus, Pencil, Trash2 } from "lucide-react";
@@ -18,6 +19,7 @@ interface User {
 }
 
 export default function ManageUsers() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -33,6 +35,16 @@ export default function ManageUsers() {
   useEffect(() => {
     loadUsers();
   }, []);
+
+  // Check for create query parameter on mount
+  useEffect(() => {
+    const createParam = searchParams.get('create');
+    if (createParam === 'true') {
+      handleCreateUser();
+      // Clear the query parameter from URL
+      setSearchParams({});
+    }
+  }, [searchParams]);
 
   const loadUsers = async () => {
     try {
@@ -92,21 +104,31 @@ export default function ManageUsers() {
         };
         const newUser = await usersApi.create(payload);
 
-        // Upload photos for students after user creation
-        if (data.role === "student" && data.photos && data.photos.length > 0) {
+        // Upload photo for students after user creation (required for face recognition)
+        if (data.role === "student") {
+          if (!data.photo) {
+            // Delete the user since photo is required
+            await usersApi.delete(newUser.id);
+            throw new Error("Photo is required for student users");
+          }
+
           try {
-            for (const photo of data.photos) {
-              await usersApi.uploadPhoto(newUser.id, photo);
-            }
-            toast.success("User and photos uploaded successfully");
+            await usersApi.uploadPhoto(newUser.id, data.photo);
+            toast.success("Student created and photo processed for face recognition");
+            setUsers([...users, newUser]);
           } catch (photoErr) {
-            toast.warning("User created but photo upload failed. You can upload photos later.");
+            // If photo upload fails, delete the user since face recognition setup failed
+            try {
+              await usersApi.delete(newUser.id);
+            } catch (deleteErr) {
+              console.error("Failed to delete user after photo upload failure:", deleteErr);
+            }
+            throw new Error("Failed to process student photo for face recognition. Student was not created. Please ensure the photo contains a clear face.");
           }
         } else {
           toast.success("User created successfully");
+          setUsers([...users, newUser]);
         }
-
-        setUsers([...users, newUser]);
       } else if (selectedUser) {
         const payload: any = {};
         if (data.name !== selectedUser.name) payload.name = data.name;
@@ -135,7 +157,7 @@ export default function ManageUsers() {
     {
       header: "Role",
       accessor: (row) => (
-        <Badge variant={row.role === "teacher" ? "default" : "secondary"}>
+        <Badge variant={row.role === "admin" ? "default" : "secondary"}>
           {row.role.charAt(0).toUpperCase() + row.role.slice(1)}
         </Badge>
       ),
