@@ -23,6 +23,7 @@ interface AttendanceRecord {
   student_name?: string;
   course_id: number;
   course_name: string;
+  session_name: string;
 }
 
 interface AttendanceResponse {

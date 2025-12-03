@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { DataTable, Column } from "@/components/shared/DataTable";
 import { Button } from "@/components/ui/button";
 import { Plus, Eye, Pencil, Trash2 } from "lucide-react";
@@ -25,6 +26,7 @@ interface Teacher {
 
 export default function ManageCourses() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [courses, setCourses] = useState<Course[]>([]);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [loading, setLoading] = useState(true);
@@ -41,6 +43,16 @@ export default function ManageCourses() {
   useEffect(() => {
     loadCoursesAndTeachers();
   }, []);
+
+  // Check for create query parameter on mount
+  useEffect(() => {
+    const createParam = searchParams.get('create');
+    if (createParam === 'true') {
+      handleCreateCourse();
+      // Clear the query parameter from URL
+      setSearchParams({});
+    }
+  }, [searchParams]);
 
   const loadCoursesAndTeachers = async () => {
     try {

@@ -45,7 +45,7 @@ export function UserFormModal({
   const [email, setEmail] = useState(user?.email || "");
   const [group, setGroup] = useState(user?.group || "");
   const [password, setPassword] = useState("");
-  const [photos, setPhotos] = useState<File[]>([]);
+  const [photo, setPhoto] = useState<File | null>(null);
 
   // Reset form when modal opens or user changes
   useEffect(() => {
@@ -55,26 +55,33 @@ export function UserFormModal({
       setRole(user?.role ? user.role.charAt(0).toUpperCase() + user.role.slice(1) : "Student");
       setGroup(user?.group || "");
       setPassword("");
-      setPhotos([]);
+      setPhoto(null);
     }
   }, [open, user]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Validate that students have exactly one photo
+    if (role === "Student" && !photo) {
+      alert("One photo is required for student face recognition.");
+      return;
+    }
+
     const formData = {
       name,
       email,
       role: role.toLowerCase(),
       ...(role === "Student" && { group }),
       ...(password && { password }),
-      ...(photos.length > 0 && { photos }),
+      ...(photo && { photo }),
     };
     onSubmit(formData);
   };
 
   const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      setPhotos(Array.from(e.target.files));
+    if (e.target.files && e.target.files.length > 0) {
+      setPhoto(e.target.files[0]);
     }
   };
 
@@ -157,19 +164,23 @@ export function UserFormModal({
 
           {role === "Student" && mode === "create" && (
             <div className="space-y-2">
-              <Label htmlFor="photos">Photos (optional)</Label>
+              <Label htmlFor="photo">Photo</Label>
               <Input
-                id="photos"
+                id="photo"
                 type="file"
                 accept="image/*"
-                multiple
                 onChange={handlePhotoChange}
                 className="rounded-lg"
+                required
                 disabled={loading}
               />
-              {photos.length > 0 && (
-                <p className="text-xs text-muted-foreground">
-                  {photos.length} photo(s) selected
+              {photo ? (
+                <p className="text-xs text-green-600">
+                  Photo selected: {photo.name} ✓
+                </p>
+              ) : (
+                <p className="text-xs text-red-500">
+                  One clear photo of the student's face is required
                 </p>
               )}
             </div>
