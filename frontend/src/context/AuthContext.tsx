@@ -8,13 +8,15 @@ interface User {
   email: string;
   role: "admin" | "teacher" | "student";
   group?: string;
+  photo_path?: string;
 }
 
-interface AuthContextType {
+export interface AuthContextType {
   user: User | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
   logout: () => void;
+  refreshUser: () => Promise<void>;
   isAuthenticated: boolean;
 }
 
@@ -52,6 +54,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     navigate("/login");
   };
 
+  const refreshUser = async () => {
+    const storedUser = authApi.getCurrentUser();
+    if (storedUser) {
+      setUser(storedUser);
+    }
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -59,6 +68,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loading,
         login,
         logout,
+        refreshUser,
         isAuthenticated: !!user,
       }}
     >

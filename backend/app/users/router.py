@@ -4,7 +4,7 @@ from typing import List
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
-from app.auth.dependencies import require_role
+from app.auth.dependencies import get_current_user, require_role
 from app.database import get_db
 from app.models import (
     Attendance,
@@ -148,6 +148,28 @@ def upload_photo(
     db.commit()
     db.refresh(student)
     return student
+
+
+@router.post("/students/photo", response_model=UserResponse)
+def upload_student_photo(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    # Only students can upload their own photos
+    if current_user.role != "student":
+        raise HTTPException(status_code=403, detail="Only students can upload photos")
+
+    # Check if student already has a photo uploaded
+    if current_user.photo_path:
+        raise HTTPException(status_code=400, detail="Photo already uploaded. You can only upload one photo.")
+
+    photo_path, embedding = extract_face_embedding(file)
+    current_user.photo_path = photo_path
+    current_user.face_embedding = embedding
+    db.commit()
+    db.refresh(current_user)
+    return current_user
 
 
 @router.post("/reset-password")

@@ -103,32 +103,8 @@ export default function ManageUsers() {
           ...(data.role === "student" && { group: data.group }),
         };
         const newUser = await usersApi.create(payload);
-
-        // Upload photo for students after user creation (required for face recognition)
-        if (data.role === "student") {
-          if (!data.photo) {
-            // Delete the user since photo is required
-            await usersApi.delete(newUser.id);
-            throw new Error("Photo is required for student users");
-          }
-
-          try {
-            await usersApi.uploadPhoto(newUser.id, data.photo);
-            toast.success("Student created and photo processed for face recognition");
-            setUsers([...users, newUser]);
-          } catch (photoErr) {
-            // If photo upload fails, delete the user since face recognition setup failed
-            try {
-              await usersApi.delete(newUser.id);
-            } catch (deleteErr) {
-              console.error("Failed to delete user after photo upload failure:", deleteErr);
-            }
-            throw new Error("Failed to process student photo for face recognition. Student was not created. Please ensure the photo contains a clear face.");
-          }
-        } else {
-          toast.success("User created successfully");
-          setUsers([...users, newUser]);
-        }
+        toast.success("User created successfully");
+        setUsers([...users, newUser]);
       } else if (selectedUser) {
         const payload: any = {};
         if (data.name !== selectedUser.name) payload.name = data.name;

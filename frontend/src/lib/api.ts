@@ -152,6 +152,26 @@ export const usersApi = {
     return response.json();
   },
 
+  uploadStudentPhoto: async (file: File) => {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const token = getToken();
+    const response = await fetch(`${BASE_URL}/admin/students/photo`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: "Failed to upload photo" }));
+      throw new Error(error.detail || "Failed to upload photo");
+    }
+    return response.json();
+  },
+
   resetPassword: async (userId: number, newPassword: string) => {
     const response = await fetchWithAuth("/admin/reset-password", {
       method: "POST",

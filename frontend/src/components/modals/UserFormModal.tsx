@@ -45,7 +45,6 @@ export function UserFormModal({
   const [email, setEmail] = useState(user?.email || "");
   const [group, setGroup] = useState(user?.group || "");
   const [password, setPassword] = useState("");
-  const [photo, setPhoto] = useState<File | null>(null);
 
   // Reset form when modal opens or user changes
   useEffect(() => {
@@ -55,18 +54,11 @@ export function UserFormModal({
       setRole(user?.role ? user.role.charAt(0).toUpperCase() + user.role.slice(1) : "Student");
       setGroup(user?.group || "");
       setPassword("");
-      setPhoto(null);
     }
   }, [open, user]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-
-    // Validate that students have exactly one photo
-    if (role === "Student" && !photo) {
-      alert("One photo is required for student face recognition.");
-      return;
-    }
 
     const formData = {
       name,
@@ -74,16 +66,10 @@ export function UserFormModal({
       role: role.toLowerCase(),
       ...(role === "Student" && { group }),
       ...(password && { password }),
-      ...(photo && { photo }),
     };
     onSubmit(formData);
   };
 
-  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      setPhoto(e.target.files[0]);
-    }
-  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -162,29 +148,6 @@ export function UserFormModal({
             />
           </div>
 
-          {role === "Student" && mode === "create" && (
-            <div className="space-y-2">
-              <Label htmlFor="photo">Photo</Label>
-              <Input
-                id="photo"
-                type="file"
-                accept="image/*"
-                onChange={handlePhotoChange}
-                className="rounded-lg"
-                required
-                disabled={loading}
-              />
-              {photo ? (
-                <p className="text-xs text-green-600">
-                  Photo selected: {photo.name} ✓
-                </p>
-              ) : (
-                <p className="text-xs text-red-500">
-                  One clear photo of the student's face is required
-                </p>
-              )}
-            </div>
-          )}
 
           <DialogFooter>
             <Button

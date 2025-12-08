@@ -1,10 +1,12 @@
 import { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { BookOpen, Calendar, TrendingUp, Award, Loader2 } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { BookOpen, Calendar, TrendingUp, Award, Loader2, Upload, Camera } from "lucide-react";
 import { StatsCard } from "@/components/shared/StatsCard";
-import { coursesApi, attendanceApi, handleApiError } from "@/lib/api";
-import { useAuth } from "@/context/AuthContext";
+import { coursesApi, attendanceApi, usersApi, handleApiError } from "@/lib/api";
+import { useAuth, AuthContextType } from "@/context/AuthContext";
 import { toast } from "sonner";
 
 interface Course {
@@ -35,11 +37,13 @@ interface AttendanceResponse {
 }
 
 export default function StudentDashboard() {
-  const { user } = useAuth();
+  const { user, refreshUser } = useAuth();
   const [courses, setCourses] = useState<Course[]>([]);
   const [attendanceData, setAttendanceData] = useState<AttendanceResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
   // Load data on mount
   useEffect(() => {
@@ -47,6 +51,50 @@ export default function StudentDashboard() {
       loadDashboardData();
     }
   }, [user]);
+
+  const handlePhotoUpload = async () => {
+    if (!photoFile) {
+      toast.error("Please select a photo to upload");
+      return;
+    }
+
+    try {
+      setUploadingPhoto(true);
+      const updatedUser = await usersApi.uploadStudentPhoto(photoFile);
+      toast.success("Photo uploaded successfully! Your face embedding has been created for attendance recognition.");
+      setPhotoFile(null);
+
+      // Update localStorage with the updated user data to hide the upload section
+      localStorage.setItem("user", JSON.stringify(updatedUser));
+      // Refresh user context
+      await refreshUser();
+    } catch (err) {
+      toast.error(handleApiError(err));
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+
+      // Validate file type
+      if (!file.type.startsWith('image/')) {
+        toast.error("Please select a valid image file");
+        return;
+      }
+
+      // Validate file size (10MB limit)
+      const maxSize = 10 * 1024 * 1024; // 10MB
+      if (file.size > maxSize) {
+        toast.error("File size must be less than 10MB");
+        return;
+      }
+
+      setPhotoFile(file);
+    }
+  };
 
   const loadDashboardData = async () => {
     if (!user) return;
@@ -142,6 +190,65 @@ export default function StudentDashboard() {
         <h1 className="text-3xl font-bold mb-2">Student Dashboard</h1>
         <p className="text-muted-foreground">Welcome back! Here's your attendance overview.</p>
       </div>
+
+      {/* Photo Upload Section - Only show if student hasn't uploaded a photo */}
+      {!user?.photo_path && (
+        <Card className="p-6 rounded-xl shadow-md mb-8 border-amber-200 bg-amber-50/50">
+          <div className="flex items-center gap-4 mb-4">
+            <div className="w-12 h-12 rounded-lg bg-amber-100 flex items-center justify-center">
+              <Camera className="w-6 h-6 text-amber-600" />
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold text-amber-900">Complete Your Profile</h2>
+              <p className="text-amber-700">Upload a clear photo of your face to enable attendance recognition</p>
+            </div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-4 items-end">
+            <div className="flex-1">
+              <Label htmlFor="photo-upload" className="text-sm font-medium">
+                Select Photo
+              </Label>
+              <Input
+                id="photo-upload"
+                type="file"
+                accept="image/*"
+                onChange={handleFileChange}
+                className="mt-1"
+                disabled={uploadingPhoto}
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Supports JPG, PNG, JPEG (Max 10MB). Photo must contain a clear face.
+              </p>
+            </div>
+            <Button
+              onClick={handlePhotoUpload}
+              disabled={!photoFile || uploadingPhoto}
+              className="rounded-lg"
+            >
+              {uploadingPhoto ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Uploading...
+                </>
+              ) : (
+                <>
+                  <Upload className="w-4 h-4 mr-2" />
+                  Upload Photo
+                </>
+              )}
+            </Button>
+          </div>
+
+          {photoFile && (
+            <div className="mt-4 p-3 bg-white rounded-lg border">
+              <p className="text-sm text-green-600">
+                ✓ Selected: {photoFile.name} ({(photoFile.size / 1024 / 1024).toFixed(2)} MB)
+              </p>
+            </div>
+          )}
+        </Card>
+      )}
 
       <div className="grid md:grid-cols-3 gap-6 mb-8">
         {stats.map((stat) => (
