@@ -28,6 +28,13 @@ interface UserFormModalProps {
     role: string;
     group?: string;
   };
+  currentUser?: {
+    id: number;
+    name: string;
+    email: string;
+    role: string;
+    group?: string;
+  };
   onSubmit: (data: any) => void;
   loading?: boolean;
 }
@@ -37,6 +44,7 @@ export function UserFormModal({
   onOpenChange,
   mode,
   user,
+  currentUser,
   onSubmit,
   loading = false,
 }: UserFormModalProps) {
@@ -45,6 +53,15 @@ export function UserFormModal({
   const [email, setEmail] = useState(user?.email || "");
   const [group, setGroup] = useState(user?.group || "");
   const [password, setPassword] = useState("");
+
+  const isSuperAdmin = user?.email === "admin@example.com" || user?.name === "Super Admin";
+  const isCurrentUserSuperAdmin = currentUser?.email === "admin@example.com" || currentUser?.name === "Super Admin";
+  const isEditingAdmin = user?.role === "admin";
+  const isEditingOwnAccount = user?.id === currentUser?.id;
+  const canEditSuperAdminFields = mode === "edit" && isSuperAdmin && isCurrentUserSuperAdmin;
+  const canEditAdminFields = mode === "edit" && (isCurrentUserSuperAdmin || isEditingOwnAccount || !isEditingAdmin);
+  const canEditAdminPassword = mode === "edit" && (isCurrentUserSuperAdmin || isEditingOwnAccount || !isEditingAdmin);
+  const canEditSuperAdminPassword = canEditSuperAdminFields;
 
   // Reset form when modal opens or user changes
   useEffect(() => {
@@ -88,6 +105,7 @@ export function UserFormModal({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
+                {isCurrentUserSuperAdmin && <SelectItem value="Admin">Admin</SelectItem>}
                 <SelectItem value="Teacher">Teacher</SelectItem>
                 <SelectItem value="Student">Student</SelectItem>
               </SelectContent>
@@ -102,7 +120,7 @@ export function UserFormModal({
               onChange={(e) => setName(e.target.value)}
               className="rounded-lg"
               required
-              disabled={loading}
+              disabled={loading || (isEditingAdmin && !canEditAdminFields) || (isSuperAdmin && !canEditSuperAdminFields)}
             />
           </div>
 
@@ -129,24 +147,26 @@ export function UserFormModal({
               onChange={(e) => setEmail(e.target.value)}
               className="rounded-lg"
               required
-              disabled={loading}
+              disabled={loading || (isEditingAdmin && !canEditAdminFields) || (isSuperAdmin && !canEditSuperAdminFields)}
             />
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="password">
-              {mode === "create" ? "Password" : "New Password (leave empty to keep current)"}
-            </Label>
-            <Input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="rounded-lg"
-              required={mode === "create"}
-              disabled={loading}
-            />
-          </div>
+          {(mode === "create" || (mode === "edit" && canEditAdminPassword)) && !(isSuperAdmin && !canEditSuperAdminFields) && (
+            <div className="space-y-2">
+              <Label htmlFor="password">
+                {mode === "create" ? "Password" : "New Password (leave empty to keep current)"}
+              </Label>
+              <Input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="rounded-lg"
+                required={mode === "create" && role === "Admin"}
+                disabled={loading}
+              />
+            </div>
+          )}
 
 
           <DialogFooter>

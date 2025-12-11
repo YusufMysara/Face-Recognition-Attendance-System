@@ -86,8 +86,12 @@ export default function CourseDetails() {
     }
   };
 
-  const handleViewSession = (sessionId: number) => {
-    navigate(`/teacher/session/${sessionId}`);
+  const handleViewSession = (session: Session) => {
+    if (session.status === "open") {
+      navigate(`/teacher/camera?session_id=${session.id}`);
+    } else {
+      navigate(`/teacher/session/${session.id}`);
+    }
   };
 
   const handleDeleteSession = async () => {
@@ -132,7 +136,7 @@ export default function CourseDetails() {
             size="sm"
             variant="ghost"
             title="View"
-            onClick={() => handleViewSession(row.id)}
+            onClick={() => handleViewSession(row)}
           >
             <Eye className="w-4 h-4" />
           </Button>

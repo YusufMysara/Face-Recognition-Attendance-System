@@ -11,7 +11,7 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    password: str
+    password: Optional[str] = None
 
 
 class UserUpdate(BaseModel):
@@ -25,6 +25,7 @@ class UserUpdate(BaseModel):
 class UserResponse(UserBase):
     id: int
     photo_path: Optional[str] = None
+    password_changed: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 

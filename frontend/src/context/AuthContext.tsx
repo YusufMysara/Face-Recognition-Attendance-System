@@ -9,6 +9,7 @@ interface User {
   role: "admin" | "teacher" | "student";
   group?: string;
   photo_path?: string;
+  password_changed?: boolean;
 }
 
 export interface AuthContextType {

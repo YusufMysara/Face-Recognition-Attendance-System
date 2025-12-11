@@ -2,12 +2,22 @@ import { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { DataTable, Column } from "@/components/shared/DataTable";
 import { Button } from "@/components/ui/button";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Upload, FileSpreadsheet, Loader2, X, Filter } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { UserFormModal } from "@/components/modals/UserFormModal";
 import { ConfirmationModal } from "@/components/modals/ConfirmationModal";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { usersApi, handleApiError } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 
 interface User {
   id: number;
@@ -19,6 +29,7 @@ interface User {
 }
 
 export default function ManageUsers() {
+  const { user: currentUser } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
@@ -30,6 +41,11 @@ export default function ManageUsers() {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
   const [formLoading, setFormLoading] = useState(false);
+  const [bulkUploadOpen, setBulkUploadOpen] = useState(false);
+  const [bulkUploading, setBulkUploading] = useState(false);
+  const [roleFilter, setRoleFilter] = useState<string>("all");
+
+  const filteredUsers = roleFilter === "all" ? users : users.filter(user => user.role === roleFilter);
 
   // Load users on component mount
   useEffect(() => {
@@ -65,6 +81,12 @@ export default function ManageUsers() {
     setUserFormOpen(true);
   };
 
+  const handleBulkUploadClick = () => {
+    console.log("Bulk upload button clicked");
+    setBulkUploadOpen(true);
+    console.log("bulkUploadOpen set to:", true);
+  };
+
   const handleEditUser = (user: User) => {
     setFormMode("edit");
     setSelectedUser(user);
@@ -95,13 +117,16 @@ export default function ManageUsers() {
       setFormLoading(true);
 
       if (formMode === "create") {
-        const payload = {
+        const payload: any = {
           name: data.name,
           email: data.email,
-          password: data.password,
           role: data.role.toLowerCase(),
           ...(data.role === "student" && { group: data.group }),
         };
+        // Only include password if it's provided
+        if (data.password) {
+          payload.password = data.password;
+        }
         const newUser = await usersApi.create(payload);
         toast.success("User created successfully");
         setUsers([...users, newUser]);
@@ -127,6 +152,21 @@ export default function ManageUsers() {
     }
   };
 
+  const handleBulkUpload = async (file: File) => {
+    try {
+      setBulkUploading(true);
+      const result = await usersApi.bulkUpload(file);
+      toast.success(`Successfully uploaded ${result.created_count} users`);
+      // Reload users to show the new ones
+      loadUsers();
+      setBulkUploadOpen(false);
+    } catch (err) {
+      toast.error(handleApiError(err));
+    } finally {
+      setBulkUploading(false);
+    }
+  };
+
   const columns: Column<User>[] = [
     { header: "Name", accessor: "name" },
     { header: "Email", accessor: "email" },
@@ -140,16 +180,31 @@ export default function ManageUsers() {
     },
     {
       header: "Actions",
-      accessor: (row) => (
-        <div className="flex gap-2">
-          <Button size="sm" variant="ghost" onClick={() => handleEditUser(row)}>
-            <Pencil className="w-4 h-4" />
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => handleDeleteClick(row)}>
-            <Trash2 className="w-4 h-4 text-destructive" />
-          </Button>
-        </div>
-      ),
+      accessor: (row) => {
+        const isSuperAdmin = row.email === "admin@example.com" || row.name === "Super Admin";
+        const isCurrentUserSuperAdmin = currentUser?.email === "admin@example.com" || currentUser?.name === "Super Admin";
+        const isEditingAdmin = row.role === "admin";
+        const isOwnAccount = row.id === currentUser?.id;
+
+        // Show delete button logic:
+        // - Super Admin: can delete anyone (except Super Admin, but that's handled by backend)
+        // - Regular admin: can delete students and teachers, but not other admins and not themselves
+        const canDelete = isCurrentUserSuperAdmin ||
+                          (!isEditingAdmin && !isOwnAccount && !isSuperAdmin);
+
+        return (
+          <div className="flex gap-2">
+            <Button size="sm" variant="ghost" onClick={() => handleEditUser(row)}>
+              <Pencil className="w-4 h-4" />
+            </Button>
+            {canDelete && (
+              <Button size="sm" variant="ghost" onClick={() => handleDeleteClick(row)}>
+                <Trash2 className="w-4 h-4 text-destructive" />
+              </Button>
+            )}
+          </div>
+        );
+      },
     },
   ];
 
@@ -188,19 +243,96 @@ export default function ManageUsers() {
           <h1 className="text-3xl font-bold mb-2">Manage Users</h1>
           <p className="text-muted-foreground">Create and manage user accounts</p>
         </div>
-        <Button onClick={handleCreateUser} className="rounded-xl">
-          <Plus className="w-4 h-4 mr-2" />
-          Create User
-        </Button>
+        <div className="flex gap-3">
+          <Button onClick={handleBulkUploadClick} variant="outline" className="rounded-xl">
+            <FileSpreadsheet className="w-4 h-4 mr-2" />
+            Bulk Upload
+          </Button>
+          <Button onClick={handleCreateUser} className="rounded-xl">
+            <Plus className="w-4 h-4 mr-2" />
+            Create User
+          </Button>
+        </div>
       </div>
 
-      <DataTable data={users} columns={columns} searchPlaceholder="Search users..." />
+      <DataTable
+        data={filteredUsers}
+        columns={columns}
+        searchPlaceholder="Search users..."
+        filterComponent={
+          <Select value={roleFilter} onValueChange={setRoleFilter}>
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder="Select role" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Roles</SelectItem>
+              <SelectItem value="admin">Admins</SelectItem>
+              <SelectItem value="teacher">Teachers</SelectItem>
+              <SelectItem value="student">Students</SelectItem>
+            </SelectContent>
+          </Select>
+        }
+      />
+
+      <Dialog open={bulkUploadOpen} onOpenChange={setBulkUploadOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Bulk Upload Users</DialogTitle>
+            <DialogDescription>
+              Upload an Excel file to create multiple users at once.
+              <br />
+              <strong>Required columns:</strong> name, email, role
+              <br />
+              <strong>Optional column:</strong> group (for students)
+              <br />
+              <strong>Note:</strong> Only Super Admin can create admin users via bulk upload.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-4 items-center gap-4">
+              <label htmlFor="excel-file" className="text-right">
+                Excel File
+              </label>
+              <input
+                id="excel-file"
+                type="file"
+                accept=".xlsx,.xls"
+                className="col-span-3"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    handleBulkUpload(file);
+                  }
+                }}
+                disabled={bulkUploading}
+              />
+            </div>
+            {bulkUploading && (
+              <div className="flex items-center justify-center">
+                <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                Uploading and processing...
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setBulkUploadOpen(false)}
+              disabled={bulkUploading}
+            >
+              Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <UserFormModal
         open={userFormOpen}
         onOpenChange={setUserFormOpen}
         mode={formMode}
         user={selectedUser}
+        currentUser={currentUser}
         onSubmit={handleFormSubmit}
         loading={formLoading}
       />

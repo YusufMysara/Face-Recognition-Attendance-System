@@ -26,6 +26,8 @@ class UserInfo(BaseModel):
     email: EmailStr
     role: str
     group: Optional[str] = None
+    photo_path: Optional[str] = None
+    password_changed: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 

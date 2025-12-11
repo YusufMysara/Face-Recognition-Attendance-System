@@ -183,6 +183,47 @@ export const usersApi = {
     }
     return response.json();
   },
+
+  changePassword: async (currentPassword: string, newPassword: string) => {
+    const formData = new FormData();
+    formData.append("current_password", currentPassword);
+    formData.append("new_password", newPassword);
+
+    const token = getToken();
+    const response = await fetch(`${BASE_URL}/admin/change-password`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: "Failed to change password" }));
+      throw new Error(error.detail || "Failed to change password");
+    }
+    return response.json();
+  },
+
+  bulkUpload: async (file: File) => {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const token = getToken();
+    const response = await fetch(`${BASE_URL}/admin/bulk-upload`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: "Failed to bulk upload users" }));
+      throw new Error(error.detail || "Failed to bulk upload users");
+    }
+    return response.json();
+  },
 };
 
 // Courses API
@@ -340,6 +381,17 @@ export const sessionsApi = {
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: "Failed to delete session" }));
       throw new Error(error.detail || "Failed to delete session");
+    }
+    return response.json();
+  },
+
+  continue: async (sessionId: number) => {
+    const response = await fetchWithAuth(`/sessions/continue?session_id=${sessionId}`, {
+      method: "POST",
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: "Failed to continue session" }));
+      throw new Error(error.detail || "Failed to continue session");
     }
     return response.json();
   },

@@ -27,6 +27,7 @@ class User(Base):
     group = Column(String, nullable=True)
     photo_path = Column(String, nullable=True)
     face_embedding = Column(Text, nullable=True)
+    password_changed = Column(Integer, default=0, nullable=False)  # 0 = not changed, 1 = changed
 
     teaching_courses = relationship("Course", back_populates="teacher")
     student_courses = relationship("StudentCourse", back_populates="student")

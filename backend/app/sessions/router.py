@@ -74,6 +74,27 @@ def end_session(
     return session
 
 
+@router.post("/continue", response_model=SessionResponse)
+def continue_session(
+    session_id: int,
+    current_user: User = Depends(require_role("teacher")),
+    db: Session = Depends(get_db),
+):
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.teacher_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not your session")
+    if session.status != "closed":
+        raise HTTPException(status_code=400, detail="Can only continue closed sessions")
+    session.status = "open"
+    # Clear ended_at when reopening
+    session.ended_at = None
+    db.commit()
+    db.refresh(session)
+    return session
+
+
 @router.post("/submit", response_model=SessionResponse)
 def submit_session(
     session_id: int,

@@ -22,6 +22,7 @@ interface DataTableProps<T> {
   columns: Column<T>[];
   searchable?: boolean;
   searchPlaceholder?: string;
+  filterComponent?: React.ReactNode;
 }
 
 export function DataTable<T extends Record<string, any>>({
@@ -29,6 +30,7 @@ export function DataTable<T extends Record<string, any>>({
   columns,
   searchable = true,
   searchPlaceholder = "Search...",
+  filterComponent,
 }: DataTableProps<T>) {
   const [searchTerm, setSearchTerm] = useState("");
 
@@ -50,14 +52,17 @@ export function DataTable<T extends Record<string, any>>({
   return (
     <div className="space-y-4">
       {searchable && (
-        <div className="flex items-center gap-2 max-w-sm">
-          <Search className="w-4 h-4 text-muted-foreground" />
-          <Input
-            placeholder={searchPlaceholder}
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="bg-background"
-          />
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 max-w-sm">
+            <Search className="w-4 h-4 text-muted-foreground" />
+            <Input
+              placeholder={searchPlaceholder}
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="bg-background"
+            />
+          </div>
+          {filterComponent}
         </div>
       )}
 

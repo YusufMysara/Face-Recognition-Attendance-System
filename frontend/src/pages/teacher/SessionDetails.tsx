@@ -4,7 +4,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Calendar, Users, CheckCircle2, XCircle, Loader2, RotateCcw } from "lucide-react";
+import { Calendar, Users, CheckCircle2, XCircle, Loader2, RotateCcw, Play, Filter } from "lucide-react";
 import { attendanceApi, coursesApi, sessionsApi, handleApiError } from "@/lib/api";
 import { toast } from "sonner";
 
@@ -34,6 +34,7 @@ export default function SessionDetails() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [selectedGroup, setSelectedGroup] = useState<string>("all");
 
   // Load session data on mount
   useEffect(() => {
@@ -88,6 +89,7 @@ export default function SessionDetails() {
           id: student.id,
           name: student.name,
           email: student.email,
+          group: student.group,
           attendance_id: attendanceRecord?.id,
           status: attendanceRecord ? attendanceRecord.status : "absent",
           marked_at: attendanceRecord?.timestamp
@@ -104,8 +106,37 @@ export default function SessionDetails() {
     }
   };
 
-  const presentCount = students.filter(s => s.status === "present").length;
-  const totalCount = students.length;
+  // Get unique groups for filter
+  const availableGroups = Array.from(new Set(students.map(s => s.group).filter(Boolean)));
+
+  // Filter students by selected group
+  const filteredStudents = selectedGroup === "all"
+    ? students
+    : students.filter(s => s.group === selectedGroup);
+
+  // Calculate stats based on filtered students
+  const presentCount = filteredStudents.filter(s => s.status === "present").length;
+  const totalCount = filteredStudents.length;
+
+  const handleContinue = async () => {
+    if (!sessionId) return;
+
+    try {
+      setSubmitting(true);
+      const sessionIdNum = parseInt(sessionId);
+
+      // Continue the session (reopen it)
+      await sessionsApi.continue(sessionIdNum);
+
+      toast.success("Session continued successfully");
+      // Navigate to live camera to continue taking attendance
+      navigate(`/teacher/camera?session_id=${sessionIdNum}`);
+    } catch (err) {
+      toast.error(handleApiError(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const handleRetake = async () => {
     if (!sessionId) return;
@@ -270,6 +301,15 @@ export default function SessionDetails() {
               </p>
             </div>
             <div className="flex gap-3">
+              {session.status === "closed" && (
+                <Button
+                  variant="outline"
+                  onClick={handleContinue}
+                  disabled={submitting}
+                >
+                  Continue
+                </Button>
+              )}
               <Button
                 variant="outline"
                 onClick={handleRetake}
@@ -299,11 +339,28 @@ export default function SessionDetails() {
       <Card className="p-6 rounded-xl shadow-md">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-semibold">Student List</h2>
-          {session.status !== "submitted" && (
-            <p className="text-sm text-muted-foreground">
-              Click on students to change their attendance status
-            </p>
-          )}
+          <div className="flex items-center gap-3">
+            {availableGroups.length > 0 && (
+              <div className="flex items-center gap-2">
+                <Filter className="w-4 h-4 text-muted-foreground" />
+                <select
+                  value={selectedGroup}
+                  onChange={(e) => setSelectedGroup(e.target.value)}
+                  className="px-3 py-1 border border-input rounded-md bg-background text-sm"
+                >
+                  <option value="all">All Groups</option>
+                  {availableGroups.map(group => (
+                    <option key={group} value={group}>{group}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {session.status !== "submitted" && (
+              <p className="text-sm text-muted-foreground">
+                Click on students to change their attendance status
+              </p>
+            )}
+          </div>
         </div>
         {students.length === 0 ? (
           <p className="text-center text-muted-foreground py-8">
@@ -311,7 +368,7 @@ export default function SessionDetails() {
           </p>
         ) : (
           <div className="space-y-3">
-            {students.map((student) => (
+            {filteredStudents.map((student) => (
               <div
                 key={student.id}
                 className={`flex items-center gap-4 p-4 rounded-lg transition-colors ${
@@ -329,7 +386,7 @@ export default function SessionDetails() {
 
                 <div className="flex-1 min-w-0">
                   <p className="font-semibold truncate">{student.name}</p>
-                  <p className="text-sm text-muted-foreground">{student.email}</p>
+                  <p className="text-sm text-muted-foreground">{student.group || "No Group"}</p>
                   {student.marked_at && (
                     <p className="text-xs text-muted-foreground">
                       Marked: {new Date(student.marked_at).toLocaleTimeString()}
