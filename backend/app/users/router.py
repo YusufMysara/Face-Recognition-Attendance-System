@@ -21,7 +21,7 @@ from app.schemas.user import (
     UserUpdate,
 )
 from app.utils.face import extract_face_embedding
-from app.utils.security import get_password_hash, verify_password
+from app.utils.security import get_password_hash, validate_password_strength, verify_password
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -41,6 +41,7 @@ def create_user(
 
     if payload.password:
         # Password provided - user has set their password
+        validate_password_strength(payload.password)
         password_hash = get_password_hash(payload.password)
         password_changed = 1
     else:
@@ -130,6 +131,7 @@ def update_user(
     if payload.role:
         user.role = payload.role
     if payload.password:
+        validate_password_strength(payload.password)
         user.password_hash = get_password_hash(payload.password)
     db.commit()
     db.refresh(user)
@@ -260,6 +262,7 @@ def reset_password(
         if user.email == "admin@example.com" or user.name == "Super Admin":
             raise HTTPException(status_code=403, detail="Super Admin password can only be changed by Super Admin himself")
 
+    validate_password_strength(payload.new_password)
     user.password_hash = get_password_hash(payload.new_password)
     db.commit()
     return {"detail": "Password reset"}
@@ -277,6 +280,7 @@ def change_password(
         raise HTTPException(status_code=400, detail="Current password is incorrect")
 
     # Update password
+    validate_password_strength(new_password)
     current_user.password_hash = get_password_hash(new_password)
     current_user.password_changed = 1  # Mark as changed
     db.commit()
