@@ -2,15 +2,10 @@ import os
 from functools import lru_cache
 
 from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        extra='ignore'
-    )
-
     app_name: str = Field(default="Face Recognition Attendance API")
     secret_key: str = Field(default=os.environ.get("JWT_SECRET", "super-secret"))
     algorithm: str = "HS256"
@@ -21,6 +16,9 @@ class Settings(BaseSettings):
         )
     )
     upload_dir: str = Field(default=os.environ.get("UPLOAD_DIR", "backend/uploads"))
+
+    class Config:
+        env_file = ".env"
 
 
 @lru_cache
