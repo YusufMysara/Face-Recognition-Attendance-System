@@ -25,7 +25,7 @@ RUN pip install --upgrade pip
 RUN pip install -r requirements.txt
 
 # Copy the rest of your application code
-COPY ./app ./app
+COPY . /app
 
 # Start the FastAPI server
 # Uses Railway's $PORT environment variable, defaults to 8080 if not set
