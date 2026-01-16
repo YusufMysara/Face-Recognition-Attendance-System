@@ -1,7 +1,7 @@
-# Base Python image
+# Use official slim Python 3.10 image
 FROM python:3.10-slim
 
-# Install system dependencies for dlib / face_recognition
+# Install system dependencies needed by dlib / face_recognition
 RUN apt-get update && apt-get install -y \
     build-essential \
     cmake \
@@ -17,13 +17,16 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /app
 
-# Copy requirements first for caching
+# Copy requirements first to leverage Docker cache
 COPY requirements.txt .
+
+# Upgrade pip and install Python dependencies
 RUN pip install --upgrade pip
 RUN pip install -r requirements.txt
 
-# Copy application code
+# Copy the rest of your application code
 COPY ./app ./app
 
-# Start the FastAPI server on Railway's $PORT
-CMD uvicorn app.main:app --host 0.0.0.0 --port $PORT
+# Start the FastAPI server
+# Uses Railway's $PORT environment variable, defaults to 8080 if not set
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}
