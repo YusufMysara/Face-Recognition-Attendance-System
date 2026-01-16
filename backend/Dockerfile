@@ -29,4 +29,4 @@ COPY ./app ./app
 
 # Start the FastAPI server
 # Uses Railway's $PORT environment variable, defaults to 8080 if not set
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port $PORT"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}"]
