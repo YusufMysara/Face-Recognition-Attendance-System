@@ -7,15 +7,12 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     app_name: str = Field(default="Face Recognition Attendance API")
-    secret_key: str = Field(default=os.environ.get("JWT_SECRET", "super-secret"))
+    secret_key: str = Field(alias="JWT_SECRET")
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 60 * 12
-    database_url: str = Field(
-        default=os.environ.get(
-            "DATABASE_URL", "sqlite:///./face_recognition_attendance.db"
-        )
-    )
-    upload_dir: str = Field(default=os.environ.get("UPLOAD_DIR", "backend/uploads"))
+    database_url: str = Field(alias="DATABASE_URL")
+    upload_dir: str = Field(default="backend/uploads", alias="UPLOAD_DIR")
+    cors_allowed_origins: str = Field(default="", alias="CORS_ALLOWED_ORIGINS")
 
     class Config:
         env_file = ".env"

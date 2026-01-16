@@ -1,5 +1,5 @@
 // API utility functions for backend communication
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+const BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
 interface ApiResponse<T> {
   data?: T;
@@ -9,7 +9,7 @@ interface ApiResponse<T> {
 // Helper function to get auth token
 const getToken = (): string | null => {
   return localStorage.getItem("token");
-};
+};  
 
 // Helper function to make authenticated requests
 const fetchWithAuth = async (
