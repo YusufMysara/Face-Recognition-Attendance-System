@@ -1,6 +1,6 @@
 {
-    "name": "student_attendance",
-    "short_name": "student_attendance",
+    "name": "Attendify",
+    "short_name": "Attendify",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

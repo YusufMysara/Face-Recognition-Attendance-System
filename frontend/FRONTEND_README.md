@@ -1,7 +1,7 @@
-# Face Recognition Attendance System - Frontend Documentation
+# Attendify - Frontend Documentation
 
 ## Overview
-This document describes the updated frontend UI and the Start Session → Live Camera flow for the Face Recognition Attendance System.
+This document describes the updated frontend UI and the Start Session → Live Camera flow for the Attendify.
 
 ## Key Changes Implemented
 

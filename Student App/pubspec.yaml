@@ -1,5 +1,5 @@
-name: student_attendance
-description: Student Attendance Tracking Mobile App
+name: attendify
+description: Attendify Student Mobile App
 publish_to: 'none'
 version: 1.0.0+1
 

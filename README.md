@@ -1,4 +1,4 @@
-# Face Recognition Attendance System
+# Attendify
 
 Complete university attendance system with FastAPI backend and React frontend driven by face recognition.
 

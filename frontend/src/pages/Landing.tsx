@@ -40,8 +40,8 @@ export default function Landing() {
         <div className="absolute inset-0 bg-background/90 backdrop-blur-sm" />
         <div className="relative z-10 text-center px-6 max-w-4xl mx-auto">
           <h1 className="text-4xl md:text-6xl font-bold mb-6 animate-fade-in">
-            Face Recognition
-            <span className="text-primary block mt-2">Attendance System</span>
+            Attendify
+            <span className="text-primary block mt-2">Smart Attendance</span>
           </h1>
           <div className="flex flex-wrap gap-4 justify-center animate-fade-in" style={{ animationDelay: "0.2s" }}>
             <Button size="lg" className="rounded-xl" onClick={() => navigate("/login")}>
