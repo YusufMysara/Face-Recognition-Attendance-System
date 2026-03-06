@@ -8,15 +8,19 @@ class ApiConfig {
   // Fallback IP - replace with your computer's IP for physical device testing
   static const String _fallbackIp = 'http://192.168.1.2:8000'; // Change this to your IP
 
+  static const String _railway = "https://face-recognition-attendance-system-"
+      "production-0ed1.up.railway.app" ;
+
   static String? _detectedBaseUrl;
 
   // Get the base URL
   static String getBaseUrl() {
     // For browser testing, use localhost
     // For physical device testing, manually change to return _fallbackIp after updating it with your IP
-    return _localhostUrl;
+    // return _localhostUrl;
     //return _emulator;
-    //return _fallbackIp;
+    // return _fallbackIp;
+    return _railway;
   }
 
   // Auth endpoints
