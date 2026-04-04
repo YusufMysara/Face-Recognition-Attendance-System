@@ -352,3 +352,89 @@ def create_manual_attendance(
     )
 
     return _to_response(record, student_name)
+
+
+@router.get("/notifications")
+def get_notifications(
+    current_user: User = Depends(require_role("student")),
+    db: Session = Depends(get_db),
+):
+    import logging
+    log = logging.getLogger("notifications.debug")
+
+    log.info("=== GET /notifications ===")
+    log.info(f"  Student ID   : {current_user.id}")
+    log.info(f"  Student email: {current_user.email}")
+
+    enrollments = (
+        db.query(StudentCourse)
+        .filter(StudentCourse.student_id == current_user.id)
+        .all()
+    )
+
+    log.info(f"  Enrollments found: {len(enrollments)}")
+    for e in enrollments:
+        log.info(f"    -> course_id={e.course_id}")
+
+    notifications = []
+    for enrollment in enrollments:
+        course = db.query(Course).filter(Course.id == enrollment.course_id).first()
+        if not course:
+            log.warning(f"  [course_id={enrollment.course_id}] Course row not found, skipping")
+            continue
+
+        log.info(f"  [course '{course.name}' id={course.id}]")
+
+        # Check ALL sessions for this course (not just submitted) so we can
+        # see if the status filter is the problem
+        all_sessions = (
+            db.query(SessionModel)
+            .filter(SessionModel.course_id == enrollment.course_id)
+            .all()
+        )
+        log.info(f"    Total sessions in course (any status): {len(all_sessions)}")
+        for s in all_sessions:
+            log.info(f"      session id={s.id} status='{s.status}'")
+
+        submitted_sessions = [s for s in all_sessions if s.status == "submitted"]
+        log.info(f"    Submitted sessions: {len(submitted_sessions)}")
+
+        if not submitted_sessions:
+            log.info("    -> No submitted sessions, skipping course")
+            continue
+
+        session_ids = [s.id for s in submitted_sessions]
+        log.info(f"    Session IDs being queried: {session_ids}")
+
+        # Check ALL attendance records for this student in those sessions
+        all_records = (
+            db.query(AttendanceModel)
+            .filter(
+                AttendanceModel.student_id == current_user.id,
+                AttendanceModel.session_id.in_(session_ids),
+            )
+            .all()
+        )
+        log.info(f"    All attendance records for student in those sessions: {len(all_records)}")
+        for r in all_records:
+            log.info(f"      record id={r.id} session_id={r.session_id} status='{r.status}'")
+
+        present_count = sum(1 for r in all_records if r.status == "present")
+        total = len(submitted_sessions)
+        log.info(f"    present_count={present_count}  total_sessions={total}")
+
+        percentage = round((present_count / total) * 100, 1)
+        log.info(f"    percentage={percentage}% -> {'WARN (< 75%)' if percentage < 75.0 else 'OK'}")
+
+        if percentage < 75.0:
+            notifications.append(
+                {
+                    "course_id": course.id,
+                    "course_name": course.name,
+                    "attendance_percentage": percentage,
+                }
+            )
+
+    log.info(f"  Returning {len(notifications)} notification(s): {notifications}")
+    log.info("=== END /notifications ===")
+    return notifications

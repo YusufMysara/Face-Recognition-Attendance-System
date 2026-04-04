@@ -19,3 +19,8 @@ final attendanceHistoryProvider = FutureProvider<List<Session>>((ref) async {
   final attendanceService = ref.watch(attendanceServiceProvider);
   return attendanceService.getAttendanceHistory();
 });
+
+final notificationsProvider = FutureProvider<List<AttendanceNotification>>((ref) async {
+  final attendanceService = ref.watch(attendanceServiceProvider);
+  return attendanceService.getNotifications();
+});

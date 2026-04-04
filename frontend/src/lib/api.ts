@@ -491,6 +491,21 @@ export const attendanceApi = {
   },
 };
 
+// Notifications API (student-only)
+export interface AttendanceNotification {
+  course_id: number;
+  course_name: string;
+  attendance_percentage: number;
+}
+
+export const notificationsApi = {
+  get: async (): Promise<AttendanceNotification[]> => {
+    const response = await fetchWithAuth("/attendance/notifications");
+    if (!response.ok) throw new Error("Failed to fetch notifications");
+    return response.json();
+  },
+};
+
 // Helper function for error handling
 export const handleApiError = (error: any): string => {
   if (error?.message) return error.message;

@@ -5,6 +5,7 @@ import '../../config/app_theme.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/attendance_provider.dart';
 import '../../providers/courses_provider.dart';
+import '../../services/attendance_service.dart';
 import '../../widgets/stat_card.dart';
 import '../../widgets/course_card.dart';
 import '../../widgets/attendance_progress.dart';
@@ -19,6 +20,10 @@ class DashboardPage extends ConsumerWidget {
     final authState = ref.watch(authStateProvider);
     final summaryAsync = ref.watch(attendanceSummaryProvider);
     final coursesAsync = ref.watch(coursesProvider);
+    final notificationsAsync = ref.watch(notificationsProvider);
+
+    // Extract the warning list (empty list while loading / on error)
+    final notifications = notificationsAsync.valueOrNull ?? [];
 
     return Scaffold(
       appBar: AppBar(
@@ -36,6 +41,21 @@ class DashboardPage extends ConsumerWidget {
           ],
         ),
         actions: [
+          // Notification bell with badge
+          Badge(
+            isLabelVisible: notifications.isNotEmpty,
+            label: Text(
+              '${notifications.length}',
+              style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
+            ),
+            backgroundColor: Colors.red,
+            child: IconButton(
+              icon: const Icon(Icons.notifications_outlined),
+              tooltip: 'Attendance Warnings',
+              onPressed: () => _showNotificationsSheet(context, notifications),
+            ),
+          ),
+          const SizedBox(width: 4),
           IconButton(
             icon: const Icon(Icons.logout_outlined),
             onPressed: () async {
@@ -51,6 +71,7 @@ class DashboardPage extends ConsumerWidget {
         onRefresh: () async {
           ref.invalidate(attendanceSummaryProvider);
           ref.invalidate(coursesProvider);
+          ref.invalidate(notificationsProvider);
         },
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
@@ -220,6 +241,89 @@ class DashboardPage extends ConsumerWidget {
           ),
         ),
       ),
+    );
+  }
+
+  /// Shows a bottom sheet listing all low-attendance warnings.
+  void _showNotificationsSheet(
+    BuildContext context,
+    List<AttendanceNotification> notifications,
+  ) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Handle bar
+              Center(
+                child: Container(
+                  margin: const EdgeInsets.only(top: 12),
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                child: Text(
+                  notifications.isEmpty
+                      ? 'Notifications'
+                      : '⚠️  ${notifications.length} Low-Attendance Warning${notifications.length > 1 ? 's' : ''}',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              const Divider(height: 1),
+              if (notifications.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 32, horizontal: 20),
+                  child: Center(
+                    child: Text(
+                      '✅  All courses above 75% attendance',
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                  ),
+                )
+              else
+                ListView.separated(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: notifications.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemBuilder: (_, i) {
+                    final n = notifications[i];
+                    return ListTile(
+                      leading: const Icon(
+                        Icons.warning_amber_rounded,
+                        color: Colors.red,
+                      ),
+                      title: Text(
+                        n.courseName,
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      subtitle: Text(
+                        'Attendance: ${n.attendancePercentage.toStringAsFixed(1)}%  —  below 75% threshold',
+                        style: const TextStyle(color: Colors.red, fontSize: 12),
+                      ),
+                    );
+                  },
+                ),
+              const SizedBox(height: 12),
+            ],
+          ),
+        );
+      },
     );
   }
 }
