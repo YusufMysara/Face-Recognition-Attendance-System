@@ -1,147 +1,153 @@
 # Attendify
 
-Complete university attendance system with FastAPI backend and React frontend driven by face recognition.
+**Face-recognition attendance system for universities** — admins manage users and courses, teachers run live sessions with camera-based check-in, and students track attendance on web and mobile.
 
-## Quick Start
+| | |
+|---|---|
+| **Backend** | Python · FastAPI · SQLAlchemy · SQLite · JWT · `face_recognition` |
+| **Web** | React · TypeScript · Vite · TanStack Query |
+| **Mobile** | Flutter (student app) |
 
-### Option 1: Automated Setup (Recommended)
+---
 
-```bash
-# Clone the repository
-git clone <repository-url>
-cd face-recognition-attendance-system
+## Live demo (Railway)
 
-# Run automated setup
-python setup.py
+> **Free tier cold start:** Railway sleeps idle services. The **first request can take ~30–60 seconds** while the container wakes.  
+> **Recommended order:** open the **backend** first, wait until it responds, **then** open the **frontend** so API calls do not time out against a sleeping API.
+
+| | URL |
+|---|---|
+| **API (backend)** | [https://face-recognition-attendance-system-production-0ed1.up.railway.app] |
+| **Interactive API docs** | [https://face-recognition-attendance-system-production-0ed1.up.railway.app/docs] |
+| **Web app (frontend)** | [https://face-recognition-attendance-system.up.railway.app/] |
+
+**Quick wake-up:** visit the backend root or `/docs` until the page loads, then use the frontend.
+
+**Demo login**
+
+- Admin: `admin@example.com` / `Admin123!`  
+
+---
+
+## What this project demonstrates
+
+- **Full-stack delivery:** REST API, SPA, and optional mobile client against the same API.
+- **Auth & authorization:** JWT bearer tokens, bcrypt passwords, role-based access (admin, teacher, student).
+- **Domain modeling:** courses, enrollments, sessions, attendance lifecycle (open → closed → submitted).
+- **Face recognition pipeline:** store face embeddings on enrollment; match live camera frames to enrolled students during a session.
+- **Ops awareness:** deployed to Railway with realistic constraints (cold starts, env-based config, CORS).
+
+---
+
+## Repository layout
+
+```
+backend/          # FastAPI app (app/main.py, routers, models, face utils)
+frontend/         # React + Vite SPA
+Student App/      # Flutter client 
+
 ```
 
-### Option 2: Manual Setup
+---
 
-1. **Clone the repository**
-2. **Backend Setup** (see Backend section below)
-3. **Frontend Setup** (see Frontend section below)
+## Core features
 
-### Access the Application
+- **Admin:** users CRUD, Excel bulk import, course & enrollment management, student photo upload (embeddings), global attendance view, password policies.
+- **Teacher:** start/end/submit sessions, live browser camera → `POST /attendance/mark`, manual edits, retake, reports.
+- **Student (web + Flutter):** courses, attendance history, percentages, low-attendance notifications.
 
-- **Frontend**: http://localhost:5173
-- **Backend API**: http://localhost:8000
-- **API Documentation**: http://localhost:8000/docs
+---
 
-**Default Admin Credentials:**
-- Email: `admin@example.com`
-- Password: `Admin123!`
+## Local development
 
-## Prerequisites
+### Prerequisites
 
 - Python 3.11+
 - Node.js 18+
-- SQLite (included)
-- `face_recognition` OS prerequisites (`cmake`, `dlib` build tools)
+- OS tooling for `face_recognition` / **dlib** (see [face_recognition](https://github.com/ageitgey/face_recognition) — Windows often needs Visual Studio Build Tools + cmake).
 
-### Windows Prerequisites for face_recognition
-
-```bash
-# Install Visual Studio Build Tools
-# Download from: https://visualstudio.microsoft.com/visual-cpp-build-tools/
-
-# Install cmake
-pip install cmake
-
-# For Windows, you might need:
-pip install dlib==19.24.0 --verbose
-```
-
-## Backend Setup
+### Backend
 
 ```bash
 cd backend
 python -m venv .venv
-.venv\Scripts\activate  # Windows
-# or
-source .venv/bin/activate  # Linux/Mac
+.venv\Scripts\activate   # Windows
+# source .venv/bin/activate   # macOS / Linux
 
 pip install -r requirements.txt
 ```
 
-### Database Setup
+**Database (first time):**
 
-1. Initialize database:
 ```bash
 python -m app.database
-```
-
-2. Run migrations:
-```bash
 sqlite3 face_recognition_attendance.db ".read migrations/001_initial.sql"
 python scripts/migrate_password_changed.py
-```
-
-3. Create admin user:
-```bash
 python scripts/seed_admin.py
 ```
 
-### Start Backend Server
+**Run:**
 
 ```bash
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Environment overrides (optional) – create `.env`:
+**`.env` (example):**
 
-```
-JWT_SECRET=change-me
+```env
+JWT_SECRET=change-me-in-production
 DATABASE_URL=sqlite:///./face_recognition_attendance.db
 UPLOAD_DIR=backend/uploads
+CORS_ALLOWED_ORIGINS=http://localhost:5173
 ```
 
-## Frontend Setup
+### Frontend
 
 ```bash
 cd frontend
 npm install
-npm run dev
 ```
 
-### Frontend Configuration
+Create `frontend/.env`:
 
-Create `.env` file in frontend directory:
-
-```
+```env
 VITE_API_BASE_URL=http://localhost:8000
 ```
 
-The frontend will be available at `http://localhost:5173`
+```bash
+npm run dev
+```
 
-## Features
+App: `http://localhost:5173` · API docs: `http://localhost:8000/docs`
 
-- **Admin Dashboard**: manage users (create, edit, delete), bulk upload users via Excel, upload photos, assign courses/groups, reset passwords, view attendance records, role-based filtering
-- **Teacher Dashboard**: manage courses and sessions, live camera capture for attendance, retake/submit/edit attendance, view course statuses and reports
-- **Student Dashboard**: view personal attendance history, per-course attendance percentage, complete profile (change password), upload photos
-- **Authentication**: JWT tokens, bcrypt password hashing, role-based access control (Super Admin, Admin, Teacher, Student)
-- **Face Recognition**: Real-time face detection and recognition using `face_recognition` library
-- **User Management**: Hierarchical permissions, password completion flow for bulk-uploaded users, secure password changes
+---
+
+## API surface (summary)
+
+| Area | Examples |
+|------|-----------|
+| Auth | `POST /auth/login` |
+| Admin | `/admin/users`, bulk upload, photo upload |
+| Courses | `/courses`, assign teacher/student |
+| Sessions | `/sessions/start`, `/sessions/submit`, … |
+| Attendance | `/attendance/mark`, history, notifications |
+
+Full contract: **`/docs`** on a running backend.
+
+---
 
 ## Troubleshooting
 
-### Backend Issues
-- **Import errors**: Ensure all packages in `requirements.txt` are installed
-- **Database errors**: Run migrations in order: `001_initial.sql` then `migrate_password_changed.py`
-- **Face recognition not working**: Install system dependencies (cmake, dlib build tools)
+| Issue | What to check |
+|--------|----------------|
+| Frontend cannot reach API | Backend running; `VITE_API_BASE_URL` / Railway env; CORS includes frontend origin |
+| Railway first load slow | Cold start — hit `/docs` first, retry |
+| Face recognition errors | dlib / cmake / image quality; students must have embeddings registered |
+| DB errors | Migrations and `DATABASE_URL` path writable |
 
-### Frontend Issues
-- **API connection failed**: Check if backend is running on port 8000 and `VITE_API_BASE_URL` is set correctly
-- **Build errors**: Run `npm install` to ensure all dependencies are installed
+---
 
-### Common Setup Issues
-- **Permission denied**: Run terminal as administrator (Windows) or use `sudo` (Linux/Mac)
-- **Port already in use**: Change ports in startup commands or kill existing processes
-- **Database locked**: Close any SQLite connections or restart the backend
+## Author
 
-## Notes
-
-- Upload directories auto-create under `backend/uploads`
-- Teacher camera capture streams frames via browser and posts to `/attendance/mark`
-- Attendance percentage formula: `(present_sessions / total_sessions) * 100`
-- Default admin account is created with email `admin@example.com` and password `Admin123!`
-
+**Youssef Mysara**
+ https://www.linkedin.com/in/youssef-maysara/
