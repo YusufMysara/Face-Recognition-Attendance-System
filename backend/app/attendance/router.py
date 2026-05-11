@@ -352,3 +352,63 @@ def create_manual_attendance(
     )
 
     return _to_response(record, student_name)
+
+
+@router.get("/notifications")
+def get_notifications(
+    current_user: User = Depends(require_role("student")),
+    db: Session = Depends(get_db),
+):
+    """
+    Return low-attendance warnings for the logged-in student.
+    Checks all enrolled courses using submitted sessions only (consistent with
+    how submit_session finalises attendance). Returns an empty list if all
+    courses are at or above 75%.
+    """
+    enrollments = (
+        db.query(StudentCourse)
+        .filter(StudentCourse.student_id == current_user.id)
+        .all()
+    )
+
+    notifications = []
+    for enrollment in enrollments:
+        course = db.query(Course).filter(Course.id == enrollment.course_id).first()
+        if not course:
+            continue
+
+        # Only look at submitted (locked) sessions — same data submit_session writes
+        submitted_sessions = (
+            db.query(SessionModel)
+            .filter(
+                SessionModel.course_id == enrollment.course_id,
+                SessionModel.status == "submitted",
+            )
+            .all()
+        )
+        total = len(submitted_sessions)
+        if total == 0:
+            continue
+
+        session_ids = [s.id for s in submitted_sessions]
+        present_count = (
+            db.query(AttendanceModel)
+            .filter(
+                AttendanceModel.student_id == current_user.id,
+                AttendanceModel.session_id.in_(session_ids),
+                AttendanceModel.status == "present",
+            )
+            .count()
+        )
+
+        percentage = round((present_count / total) * 100, 1)
+        if percentage < 75.0:
+            notifications.append(
+                {
+                    "course_id": course.id,
+                    "course_name": course.name,
+                    "attendance_percentage": percentage,
+                }
+            )
+
+    return notifications

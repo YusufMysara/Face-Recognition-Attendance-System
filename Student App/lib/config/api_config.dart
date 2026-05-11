@@ -6,7 +6,8 @@ class ApiConfig {
   static const String _emulator = 'http://10.0.2.2:8000'; // Replace with your ngrok URL
 
   // Fallback IP - replace with your computer's IP for physical device testing
-  static const String _fallbackIp = 'http://192.168.1.2:8000'; // Change this to your IP
+  static const String _fallbackIp = 'http://192.168.1.13:8000'; // Change this
+  // to your IP
 
   static const String _railway = "https://face-recognition-attendance-system-"
       "production-0ed1.up.railway.app" ;
@@ -33,6 +34,7 @@ class ApiConfig {
   static const String studentAttendance = '/attendance/student/{studentId}';
   static const String courseDetails = '/courses/{courseId}';
   static const String courseSessions = '/sessions/course/{courseId}';
+  static const String notifications = '/attendance/notifications';
 
   // Timeout durations
   static const int connectTimeout = 30000;

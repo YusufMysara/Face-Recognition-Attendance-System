@@ -112,4 +112,37 @@ class AttendanceService {
              session.dateTime!.isBefore(endDate);
     }).toList();
   }
+
+  /// Get low-attendance warnings for the logged-in student.
+  /// Returns a list of courses where attendance has dropped below 75%.
+  Future<List<AttendanceNotification>> getNotifications() async {
+    try {
+      final response = await _dio.get(ApiConfig.notifications);
+      final data = response.data as List<dynamic>;
+      return data.map((item) => AttendanceNotification.fromJson(item as Map<String, dynamic>)).toList();
+    } on DioException catch (e) {
+      throw Exception('Failed to load notifications: ${e.message}');
+    }
+  }
+}
+
+/// Model for a single low-attendance warning.
+class AttendanceNotification {
+  final int courseId;
+  final String courseName;
+  final double attendancePercentage;
+
+  const AttendanceNotification({
+    required this.courseId,
+    required this.courseName,
+    required this.attendancePercentage,
+  });
+
+  factory AttendanceNotification.fromJson(Map<String, dynamic> json) {
+    return AttendanceNotification(
+      courseId: json['course_id'] as int,
+      courseName: json['course_name'] as String,
+      attendancePercentage: (json['attendance_percentage'] as num).toDouble(),
+    );
+  }
 }
