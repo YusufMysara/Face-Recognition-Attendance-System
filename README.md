@@ -144,10 +144,3 @@ Full contract: **`/docs`** on a running backend.
 | Railway first load slow | Cold start — hit `/docs` first, retry |
 | Face recognition errors | dlib / cmake / image quality; students must have embeddings registered |
 | DB errors | Migrations and `DATABASE_URL` path writable |
-
----
-
-## Author
-
-**Youssef Mysara**
- https://www.linkedin.com/in/youssef-maysara/
