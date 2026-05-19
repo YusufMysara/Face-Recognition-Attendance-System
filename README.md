@@ -136,7 +136,7 @@ Full contract: **`/docs`** on a running backend.
 
 ---
 
-## Troubleshooting
+### Troubleshooting
 
 | Issue | What to check |
 |--------|----------------|
