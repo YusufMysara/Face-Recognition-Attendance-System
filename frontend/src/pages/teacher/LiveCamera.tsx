@@ -1,15 +1,51 @@
-import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Camera, CameraOff, Users, Square, AlertCircle, Loader2, RotateCcw } from "lucide-react";
-import { useState, useEffect, useRef } from "react";
-import { Badge } from "@/components/ui/badge";
-import { useSearchParams, useNavigate } from "react-router-dom";
-import { CourseSelectionModal } from "@/components/modals/CourseSelectionModal";
-import { toast } from "sonner";
-import { sessionsApi, coursesApi, attendanceApi, handleApiError } from "@/lib/api";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { FaceDetector, FilesetResolver } from "@mediapipe/tasks-vision";
+import type { Detection } from "@mediapipe/tasks-vision";
 
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { CourseSelectionModal } from "@/components/modals/CourseSelectionModal";
+import {
+  AlertCircle,
+  Camera,
+  CameraOff,
+  Loader2,
+  RotateCcw,
+  ScanFace,
+  Square,
+  Users,
+} from "lucide-react";
+import { toast } from "sonner";
+import {
+  attendanceApi,
+  coursesApi,
+  handleApiError,
+  sessionsApi,
+} from "@/lib/api";
+
+// ── MediaPipe config ────────────────────────────────────────────────────────
+const MEDIAPIPE_WASM =
+  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm";
+// Short-range model: fast, accurate up to ~2 m.
+// minDetectionConfidence is lowered so far/small faces still register.
+const MODEL_URL =
+  "https://storage.googleapis.com/mediapipe-models/face_detector/" +
+  "blaze_face_short_range/float16/1/blaze_face_short_range.tflite";
+
+/** Minimum ms between successive recognition API calls. */
+const RECOGNITION_COOLDOWN_MS = 1_500;
+
+// ── Types ───────────────────────────────────────────────────────────────────
 interface Course {
   id: number;
   name: string;
@@ -33,10 +69,35 @@ interface DetectedStudent {
   status: "detected";
 }
 
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+/**
+ * Compute the scale + offset needed to map a point from the video's natural
+ * pixel space into the canvas pixel space, assuming the video uses
+ * object-fit: cover inside its container.
+ */
+function getObjectFitCoverTransform(video: HTMLVideoElement) {
+  const cw = video.clientWidth;
+  const ch = video.clientHeight;
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  if (!vw || !vh) return null;
+  const scale = Math.max(cw / vw, ch / vh);
+  return {
+    scale,
+    offsetX: (cw - vw * scale) / 2,
+    offsetY: (ch - vh * scale) / 2,
+    canvasW: cw,
+    canvasH: ch,
+  };
+}
+
+// ── Component ────────────────────────────────────────────────────────────────
 export default function LiveCamera() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
+  // ── Existing session / course state ──────────────────────────────────────
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [currentSession, setCurrentSession] = useState<Session | null>(null);
   const [courses, setCourses] = useState<Course[]>([]);
@@ -48,91 +109,109 @@ export default function LiveCamera() {
   const [cameraDevices, setCameraDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState<string>("");
 
+  // ── MediaPipe / detection state ───────────────────────────────────────────
+  const [detectorReady, setDetectorReady] = useState(false);
+  const [facesNow, setFacesNow] = useState(0);         // faces in current frame
+  const [isRecognizing, setIsRecognizing] = useState(false);
+
+  // ── DOM refs ──────────────────────────────────────────────────────────────
   const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  /** Canvas rendered on top of the video for live bounding-box overlays. */
+  const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
+  /** Hidden canvas used only to capture a JPEG frame for the backend. */
+  const captureCanvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
-  // Ensure video element is ready
+  // ── MediaPipe refs ────────────────────────────────────────────────────────
+  const faceDetectorRef = useRef<FaceDetector | null>(null);
+  const animFrameRef = useRef<number | null>(null);
+  const detectionActiveRef = useRef(false);
+  const lastRecognitionRef = useRef(0);
+  const isRecognizingRef = useRef(false);
+
+  /** Mirror of currentSession kept up-to-date for use inside the rAF loop. */
+  const currentSessionRef = useRef<Session | null>(null);
   useEffect(() => {
-    console.log("Video element mounted:", !!videoRef.current);
-  }, []);
-
-  // Load available cameras (without requesting permission)
-  useEffect(() => {
-    loadCameraDevices();
-  }, []);
-
-  const loadCameraDevices = async () => {
-    try {
-      // Check if we have camera permission by trying to enumerate devices
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const videoDevices = devices.filter(device => device.kind === 'videoinput');
-
-      // Filter out devices without proper labels (usually means no permission)
-      const accessibleDevices = videoDevices.filter(device => device.label || device.deviceId);
-
-      if (accessibleDevices.length === 0 && videoDevices.length > 0) {
-        // We have devices but no labels, try to get permission
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-          stream.getTracks().forEach(track => track.stop()); // Stop the stream immediately
-
-          // Now enumerate again with permission
-          const devicesWithPermission = await navigator.mediaDevices.enumerateDevices();
-          const videoDevicesWithPermission = devicesWithPermission.filter(device => device.kind === 'videoinput');
-          setCameraDevices(videoDevicesWithPermission);
-
-          if (videoDevicesWithPermission.length > 0 && !selectedCameraId) {
-            setSelectedCameraId(videoDevicesWithPermission[0].deviceId);
-          }
-        } catch (permissionErr) {
-          console.error("Camera permission denied:", permissionErr);
-          setCameraDevices([]);
-        }
-      } else {
-        // We already have accessible devices
-        setCameraDevices(accessibleDevices);
-        if (accessibleDevices.length > 0 && !selectedCameraId) {
-          setSelectedCameraId(accessibleDevices[0].deviceId);
-        }
-      }
-    } catch (err) {
-      console.error("Error loading camera devices:", err);
-      setCameraDevices([]);
-    }
-  };
+    currentSessionRef.current = currentSession;
+  }, [currentSession]);
 
   const sessionId = searchParams.get("session_id");
   const courseId = searchParams.get("course_id");
 
+  // ── Initialise MediaPipe on mount ─────────────────────────────────────────
+  useEffect(() => {
+    initFaceDetector();
+    loadCameraDevices();
+
+    return () => {
+      // Cleanup on unmount
+      detectionActiveRef.current = false;
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+    };
+  }, []);
+
+  const initFaceDetector = async () => {
+    const tryInit = async (delegate: "GPU" | "CPU") => {
+      const vision = await FilesetResolver.forVisionTasks(MEDIAPIPE_WASM);
+      faceDetectorRef.current = await FaceDetector.createFromOptions(vision, {
+        baseOptions: { modelAssetPath: MODEL_URL, delegate },
+        runningMode: "VIDEO",
+        // Lower confidence → catches faces that are small / far from camera
+        minDetectionConfidence: 0.35,
+        minSuppressionThreshold: 0.3,
+      });
+    };
+
+    try {
+      await tryInit("GPU");
+    } catch {
+      try {
+        await tryInit("CPU");
+      } catch (err) {
+        console.error("MediaPipe FaceDetector failed to initialise:", err);
+        return;
+      }
+    }
+    setDetectorReady(true);
+  };
+
+  // ── Load camera device list ───────────────────────────────────────────────
+  const loadCameraDevices = async () => {
+    try {
+      let devices = await navigator.mediaDevices.enumerateDevices();
+      let videoDevices = devices.filter((d) => d.kind === "videoinput");
+
+      // If labels are empty we don't yet have permission — request briefly
+      if (videoDevices.length > 0 && !videoDevices[0].label) {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        stream.getTracks().forEach((t) => t.stop());
+        devices = await navigator.mediaDevices.enumerateDevices();
+        videoDevices = devices.filter((d) => d.kind === "videoinput");
+      }
+
+      setCameraDevices(videoDevices);
+      if (videoDevices.length > 0) setSelectedCameraId(videoDevices[0].deviceId);
+    } catch {
+      setCameraDevices([]);
+    }
+  };
+
+  // ── Session / course loading ──────────────────────────────────────────────
   useEffect(() => {
     loadSessionData();
     loadCourses();
   }, [sessionId]);
 
-  // Auto-start session if course_id is provided in URL
   useEffect(() => {
     if (courseId && courses.length > 0 && !currentSession && !startingSession) {
-      console.log("Auto-starting session for course:", courseId);
       handleStartNewSession(courseId);
     }
   }, [courseId, courses, currentSession, startingSession]);
 
-  // Debug logging for state changes
-  useEffect(() => {
-    console.log("State update - isCameraActive:", isCameraActive, "currentSession:", currentSession?.id);
-    console.log("Video ref current:", !!videoRef.current);
-    if (videoRef.current) {
-      console.log("Video srcObject:", !!videoRef.current.srcObject);
-      console.log("Video readyState:", videoRef.current.readyState);
-      console.log("Video paused:", videoRef.current.paused);
-    }
-  }, [isCameraActive, currentSession]);
-
   const loadCourses = async () => {
     try {
-      const coursesData = await coursesApi.list();
-      setCourses(coursesData);
+      setCourses(await coursesApi.list());
     } catch (err) {
       console.error("Error loading courses:", err);
     }
@@ -143,40 +222,27 @@ export default function LiveCamera() {
     setError(null);
     try {
       if (sessionId) {
-        // Load existing session data to resume it
-        const sessionIdNum = parseInt(sessionId);
-        let sessionData = await sessionsApi.get(sessionIdNum);
+        const sid = parseInt(sessionId);
+        let sessionData = await sessionsApi.get(sid);
 
-        // Check if session is submitted (can't reopen submitted sessions)
         if (sessionData.status === "submitted") {
           toast.error("This session has already been submitted");
-          navigate(`/teacher/session/${sessionIdNum}/review`);
+          navigate(`/teacher/session/${sid}/review`);
           return;
         }
-
-        // If session is closed, retake it (clears all attendance and reopens)
         if (sessionData.status === "closed") {
-          console.log("Retaking closed session - clearing attendance and reopening");
-          await attendanceApi.retake(sessionIdNum);
-          // Reload session data after retake
-          sessionData = await sessionsApi.get(sessionIdNum);
-          toast.success("Session reopened for retake - all attendance cleared");
+          await attendanceApi.retake(sid);
+          sessionData = await sessionsApi.get(sid);
+          toast.success("Session reopened for retake — attendance cleared");
         }
 
-        console.log("Resuming session:", sessionData);
         setCurrentSession(sessionData);
 
-        // Load course data for the session
         if (sessionData.course_id) {
           const courseData = await coursesApi.get(sessionData.course_id);
-          // Find the course in our loaded courses or add it
-          setCourses(prevCourses => {
-            const existing = prevCourses.find(c => c.id === courseData.id);
-            if (!existing) {
-              return [...prevCourses, courseData];
-            }
-            return prevCourses;
-          });
+          setCourses((prev) =>
+            prev.find((c) => c.id === courseData.id) ? prev : [...prev, courseData]
+          );
         }
       }
     } catch (err) {
@@ -187,23 +253,12 @@ export default function LiveCamera() {
     }
   };
 
-  const handleStartNewSession = async (courseId: string) => {
-    console.log("Starting session for course:", courseId);
+  const handleStartNewSession = async (cid: string) => {
     try {
       setStartingSession(true);
-      const courseIdNum = parseInt(courseId);
-
-      // Check if there's already an active session for this course
-      // We can't easily check this with the current API, so we'll proceed
-      // In a real implementation, you'd want to check for active sessions
-
-      console.log("Calling sessionsApi.start with courseId:", courseIdNum);
-      const response = await sessionsApi.start(courseIdNum);
-      console.log("Session started successfully:", response);
-
-      toast.success("Session started successfully");
+      const response = await sessionsApi.start(parseInt(cid));
+      toast.success("Session started");
       setCurrentSession(response);
-      console.log("Session created with status:", response.status);
       setShowCourseModal(false);
     } catch (err) {
       toast.error(handleApiError(err));
@@ -214,7 +269,6 @@ export default function LiveCamera() {
 
   const handleEndSession = async () => {
     if (!currentSession) return;
-
     try {
       await sessionsApi.end(currentSession.id);
       navigate(`/teacher/session/${currentSession.id}/review`);
@@ -223,212 +277,266 @@ export default function LiveCamera() {
     }
   };
 
+  // ── Camera toggle ─────────────────────────────────────────────────────────
   const handleToggleCamera = async () => {
-    console.log("=== CAMERA TOGGLE CLICKED ===");
-    console.log("Camera toggle clicked, currentSession:", currentSession);
     if (!currentSession) {
-      console.log("No current session, showing error");
       toast.error("Please start a session first");
       return;
     }
-
-    console.log("Session status:", currentSession.status);
-
     if (currentSession.status !== "open") {
-      console.log("Session not active, returning");
       toast.error("Session is not active");
       return;
     }
 
-    console.log("About to check isCameraActive:", isCameraActive);
     if (!isCameraActive) {
-      console.log("Entering camera start block");
       try {
-        console.log("Requesting camera access...");
-        const constraints: MediaStreamConstraints = {
+        const stream = await navigator.mediaDevices.getUserMedia({
           video: {
-            width: { ideal: 640 },
-            height: { ideal: 480 },
-            deviceId: selectedCameraId ? { exact: selectedCameraId } : undefined
-          }
-        };
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        console.log("Camera access granted, stream:", stream);
-
-        if (videoRef.current) {
-          console.log("Setting video srcObject");
-          console.log("Video element exists:", !!videoRef.current);
-          console.log("Stream tracks:", stream.getTracks().length);
-          videoRef.current.srcObject = stream;
-          console.log("Video srcObject set successfully");
-
-          // Wait for video to be ready
-          videoRef.current.onloadedmetadata = async () => {
-            console.log("Video metadata loaded, attempting to play");
-            console.log("Video dimensions:", videoRef.current!.videoWidth, "x", videoRef.current!.videoHeight);
-            try {
-              await videoRef.current!.play(); // Explicitly play the video
-              console.log("Video started playing successfully");
-              console.log("Video readyState:", videoRef.current!.readyState);
-              console.log("Video paused:", videoRef.current!.paused);
-              streamRef.current = stream;
-              setIsCameraActive(true);
-            } catch (playError) {
-              console.error("Failed to play video:", playError);
-              toast.error("Failed to start video playback");
-            }
-          };
-
-          // Also try to play immediately in case metadata is already loaded
-          setTimeout(async () => {
-            if (videoRef.current && !isCameraActive) {
-              try {
-                console.log("Fallback: trying to play video immediately");
-                await videoRef.current.play();
-                console.log("Fallback play successful");
-                streamRef.current = stream;
-                setIsCameraActive(true);
-              } catch (e) {
-                console.log("Fallback play failed, waiting for metadata");
-              }
-            }
-          }, 100);
-        } else {
-          console.error("Video element not available!");
-          toast.error("Video element not ready, please try again");
-        }
-      } catch (err) {
-        console.error("Camera access error:", err);
-        toast.error(`Failed to access camera: ${err.message || err}`);
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            deviceId: selectedCameraId ? { exact: selectedCameraId } : undefined,
+          },
+        });
+        streamRef.current = stream;
+        const video = videoRef.current!;
+        video.srcObject = stream;
+        await video.play();
+        setIsCameraActive(true);
+      } catch (err: any) {
+        toast.error(`Camera error: ${err.message ?? err}`);
       }
     } else {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
-        streamRef.current = null;
-      }
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+      if (videoRef.current) videoRef.current.srcObject = null;
       setIsCameraActive(false);
       setDetectedStudents([]);
     }
   };
 
-  const captureAndRecognize = async () => {
-    if (!currentSession || !videoRef.current || !canvasRef.current) return;
-
-    const canvas = canvasRef.current;
-    const video = videoRef.current;
-    const context = canvas.getContext('2d');
-
-    if (!context) return;
-
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    context.drawImage(video, 0, 0);
-
-    canvas.toBlob(async (blob) => {
-      if (!blob) return;
-
-      try {
-        const response = await attendanceApi.mark(currentSession.id, blob);
-        console.log("Recognition response:", response);
-
-        // Process the detected students from the response
-        if (response.attendance && response.attendance.length > 0) {
-          const newDetections: DetectedStudent[] = response.attendance.map((attendance: any) => ({
-            id: attendance.student_id,
-            name: attendance.student_name || `Student ${attendance.student_id}`,
-            timestamp: attendance.timestamp || new Date().toISOString(),
-            status: "detected" as const,
-          }));
-
-          // Add new detections to the list, avoiding duplicates
-          setDetectedStudents(prev => {
-            const existingIds = new Set(prev.map(s => s.id));
-            const uniqueNewDetections = newDetections.filter(s => !existingIds.has(s.id));
-            return [...prev, ...uniqueNewDetections].slice(-10); // Keep last 10 detections
-          });
-
-          // Show success message with number of detections
-          if (newDetections.length > 0) {
-            toast.success(`${newDetections.length} student(s) detected and marked present`);
-          }
-        }
-      } catch (err) {
-        console.error("Recognition error:", err);
-        // Don't show error toast for every failed recognition attempt
-      }
-    }, 'image/jpeg', 0.8);
-  };
-
-  // Capture frames when camera is active
+  // ── Start / stop the detection loop when camera state changes ────────────
   useEffect(() => {
-    let interval: NodeJS.Timeout;
+    if (isCameraActive && detectorReady) {
+      detectionActiveRef.current = true;
+      animFrameRef.current = requestAnimationFrame(detectionLoop);
+    } else {
+      detectionActiveRef.current = false;
+      if (animFrameRef.current) {
+        cancelAnimationFrame(animFrameRef.current);
+        animFrameRef.current = null;
+      }
+      // Clear overlay
+      const overlay = overlayCanvasRef.current;
+      if (overlay) {
+        overlay.getContext("2d")?.clearRect(0, 0, overlay.width, overlay.height);
+      }
+      setFacesNow(0);
+    }
+  }, [isCameraActive, detectorReady]);
 
-    if (isCameraActive && currentSession) {
-      interval = setInterval(captureAndRecognize, 3000); // Capture every 3 seconds
+  // ── Core detection loop (runs at ~60 fps via requestAnimationFrame) ───────
+  // All mutable dependencies are accessed through refs so the function is
+  // stable and never goes stale inside the rAF callback chain.
+  const detectionLoop = useCallback(() => {
+    if (!detectionActiveRef.current) return;
+
+    const video = videoRef.current;
+    const overlay = overlayCanvasRef.current;
+    const detector = faceDetectorRef.current;
+
+    // Wait until video is actually playing
+    if (
+      !video ||
+      !overlay ||
+      !detector ||
+      video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
+      video.paused
+    ) {
+      animFrameRef.current = requestAnimationFrame(detectionLoop);
+      return;
     }
 
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [isCameraActive, currentSession]);
+    // Keep the overlay canvas sized to the video's rendered CSS pixels
+    const transform = getObjectFitCoverTransform(video);
+    if (!transform) {
+      animFrameRef.current = requestAnimationFrame(detectionLoop);
+      return;
+    }
+    const { scale, offsetX, offsetY, canvasW, canvasH } = transform;
+    if (overlay.width !== canvasW || overlay.height !== canvasH) {
+      overlay.width = canvasW;
+      overlay.height = canvasH;
+    }
 
-  // Cleanup camera on unmount
-  useEffect(() => {
-    return () => {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
+    const ctx = overlay.getContext("2d")!;
+    ctx.clearRect(0, 0, canvasW, canvasH);
+
+    // ── Run MediaPipe face detection ────────────────────────────────────────
+    const now = performance.now();
+    const { detections } = detector.detectForVideo(video, now);
+    setFacesNow(detections.length);
+
+    if (detections.length > 0) {
+      drawBoundingBoxes(ctx, detections, scale, offsetX, offsetY);
+
+      // Trigger recognition when the cooldown has elapsed and we're not
+      // already waiting for a previous API response
+      if (
+        now - lastRecognitionRef.current > RECOGNITION_COOLDOWN_MS &&
+        !isRecognizingRef.current
+      ) {
+        lastRecognitionRef.current = now;
+        sendForRecognition(detections);
       }
-    };
-  }, []);
+    }
 
+    if (detectionActiveRef.current) {
+      animFrameRef.current = requestAnimationFrame(detectionLoop);
+    }
+  }, []); // stable — all deps go through refs
+
+  // ── Draw bounding boxes ───────────────────────────────────────────────────
+  function drawBoundingBoxes(
+    ctx: CanvasRenderingContext2D,
+    detections: Detection[],
+    scale: number,
+    offsetX: number,
+    offsetY: number,
+  ) {
+    detections.forEach((det) => {
+      const bb = det.boundingBox!;
+      const x = bb.originX * scale + offsetX;
+      const y = bb.originY * scale + offsetY;
+      const w = bb.width * scale;
+      const h = bb.height * scale;
+
+      // Semi-transparent fill
+      ctx.fillStyle = "rgba(34, 197, 94, 0.08)";
+      ctx.fillRect(x, y, w, h);
+
+      // Solid border
+      ctx.strokeStyle = "#22c55e";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x, y, w, h);
+
+      // Corner accents
+      const c = Math.min(w, h) * 0.22;
+      ctx.strokeStyle = "#4ade80";
+      ctx.lineWidth = 3;
+      ctx.lineCap = "round";
+      // Top-left
+      ctx.beginPath(); ctx.moveTo(x, y + c); ctx.lineTo(x, y); ctx.lineTo(x + c, y); ctx.stroke();
+      // Top-right
+      ctx.beginPath(); ctx.moveTo(x + w - c, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + c); ctx.stroke();
+      // Bottom-left
+      ctx.beginPath(); ctx.moveTo(x, y + h - c); ctx.lineTo(x, y + h); ctx.lineTo(x + c, y + h); ctx.stroke();
+      // Bottom-right
+      ctx.beginPath(); ctx.moveTo(x + w - c, y + h); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w, y + h - c); ctx.stroke();
+
+      // Confidence badge above box
+      const conf = det.categories[0]?.score ?? 0;
+      const label = `${(conf * 100).toFixed(0)}%`;
+      ctx.font = "bold 11px monospace";
+      const textW = ctx.measureText(label).width + 8;
+      ctx.fillStyle = "#16a34a";
+      ctx.beginPath();
+      ctx.roundRect(x, y - 20, textW, 18, 3);
+      ctx.fill();
+      ctx.fillStyle = "#fff";
+      ctx.fillText(label, x + 4, y - 6);
+    });
+  }
+
+  // ── Send frame to backend for recognition ─────────────────────────────────
+  const sendForRecognition = useCallback(async (detections: Detection[]) => {
+    const session = currentSessionRef.current;
+    if (!session || !videoRef.current || !captureCanvasRef.current) return;
+    if (isRecognizingRef.current) return;
+
+    isRecognizingRef.current = true;
+    setIsRecognizing(true);
+
+    try {
+      const video = videoRef.current;
+      const capture = captureCanvasRef.current;
+      capture.width = video.videoWidth;
+      capture.height = video.videoHeight;
+      const ctx = capture.getContext("2d");
+      if (!ctx) return;
+      ctx.drawImage(video, 0, 0);
+
+      // Convert MediaPipe bounding boxes → face_recognition format:
+      // [top, right, bottom, left]  (all in natural video pixels)
+      const faceLocations = detections
+        .filter((d) => d.boundingBox)
+        .map((d) => {
+          const { originX, originY, width, height } = d.boundingBox!;
+          return [
+            Math.max(0, Math.round(originY)),                     // top
+            Math.min(video.videoWidth, Math.round(originX + width)),  // right
+            Math.min(video.videoHeight, Math.round(originY + height)), // bottom
+            Math.max(0, Math.round(originX)),                     // left
+          ];
+        });
+
+      const blob = await new Promise<Blob | null>((res) =>
+        capture.toBlob(res, "image/jpeg", 0.85)
+      );
+      if (!blob) return;
+
+      const response = await attendanceApi.mark(session.id, blob, faceLocations);
+
+      if (response.attendance?.length > 0) {
+        const incoming: DetectedStudent[] = response.attendance.map((a: any) => ({
+          id: a.student_id,
+          name: a.student_name ?? `Student ${a.student_id}`,
+          timestamp: a.timestamp ?? new Date().toISOString(),
+          status: "detected" as const,
+        }));
+
+        setDetectedStudents((prev) => {
+          const seen = new Set(prev.map((s) => s.id));
+          const unique = incoming.filter((s) => !seen.has(s.id));
+          if (unique.length > 0) {
+            toast.success(`${unique.length} student(s) marked present`);
+          }
+          return [...prev, ...unique].slice(-10);
+        });
+      }
+    } catch (err) {
+      console.error("Recognition error:", err);
+    } finally {
+      isRecognizingRef.current = false;
+      setIsRecognizing(false);
+    }
+  }, []); // stable — all deps go through refs
+
+  // ── Loading / no-session screens ──────────────────────────────────────────
   if (loading) {
     return (
-      <div className="content-container">
-        <div className="flex items-center justify-center h-64">
-          <p className="text-muted-foreground">Loading...</p>
-        </div>
+      <div className="content-container flex items-center justify-center h-64">
+        <p className="text-muted-foreground">Loading…</p>
       </div>
     );
   }
 
-  // No session selected - show start new session option
   if (!currentSession) {
-    if (loading || (courseId && startingSession)) {
+    if (courseId && startingSession) {
       return (
-        <div className="content-container">
-          <div className="flex items-center justify-center h-64">
-            <div className="text-center">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
-              <p className="text-muted-foreground">
-                {courseId ? "Starting session..." : "Loading..."}
-              </p>
-            </div>
+        <div className="content-container flex items-center justify-center h-64">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4" />
+            <p className="text-muted-foreground">Starting session…</p>
           </div>
         </div>
       );
     }
-
-    // If we have a course_id from URL, show loading while auto-starting
-    if (courseId) {
-      return (
-        <div className="content-container">
-          <div className="flex items-center justify-center h-64">
-            <div className="text-center">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
-              <p className="text-muted-foreground">Starting session for selected course...</p>
-            </div>
-          </div>
-        </div>
-      );
-    }
-
     return (
       <div className="content-container">
         <div className="mb-6">
           <h1 className="text-3xl font-bold mb-2">Live Camera</h1>
           <p className="text-muted-foreground">Real-time face recognition for attendance</p>
         </div>
-
         <Card className="p-8 rounded-xl shadow-md text-center">
           <Camera className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
           <h3 className="text-xl font-semibold mb-2">Start New Session</h3>
@@ -442,46 +550,38 @@ export default function LiveCamera() {
             disabled={startingSession}
           >
             {startingSession ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Starting...
-              </>
+              <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Starting…</>
             ) : (
-              <>
-                <Camera className="w-4 h-4 mr-2" />
-                Start Session
-              </>
+              <><Camera className="w-4 h-4 mr-2" />Start Session</>
             )}
           </Button>
         </Card>
-
         <CourseSelectionModal
           open={showCourseModal}
           onOpenChange={setShowCourseModal}
-          courses={courses.map(c => ({ id: String(c.id), name: c.name, code: `COURSE-${c.id}` }))}
+          courses={courses.map((c) => ({ id: String(c.id), name: c.name, code: `COURSE-${c.id}` }))}
           onStart={handleStartNewSession}
         />
       </div>
     );
   }
 
-  // Session active - show camera interface
-  const currentCourse = courses.find(c => c.id === currentSession.course_id);
+  // ── Main camera interface ─────────────────────────────────────────────────
+  const currentCourse = courses.find((c) => c.id === currentSession.course_id);
 
   return (
     <div className="content-container">
+      {/* Header */}
       <div className="mb-6">
         <h1 className="text-3xl font-bold mb-2">Live Camera</h1>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3 flex-wrap">
           <p className="text-muted-foreground">Real-time face recognition for attendance</p>
           <Badge variant="default" className="ml-auto">
-            {currentCourse?.name || "Unknown Course"}
+            {currentCourse?.name ?? "Unknown Course"}
           </Badge>
-          {currentSession && (
-            <Badge variant={currentSession.status === "open" ? "default" : "secondary"}>
-              Session: {currentSession.status}
-            </Badge>
-          )}
+          <Badge variant={currentSession.status === "open" ? "default" : "secondary"}>
+            Session: {currentSession.status}
+          </Badge>
         </div>
       </div>
 
@@ -489,78 +589,111 @@ export default function LiveCamera() {
         <Alert className="mb-6">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>
-            This session is closed. Recognition is disabled. Please start a new session.
+            This session is closed. Recognition is disabled.
           </AlertDescription>
         </Alert>
       )}
 
       <div className="grid lg:grid-cols-3 gap-6">
+        {/* ── Camera feed ─────────────────────────────────────────────────── */}
         <div className="lg:col-span-2">
           <Card className="p-6 rounded-xl shadow-md">
-            <div className="w-full h-96 bg-black rounded-lg mb-4 relative overflow-hidden" style={{ minHeight: '384px' }}>
+
+            {/* Video + overlay container */}
+            <div
+              className="w-full bg-black rounded-lg mb-4 overflow-hidden"
+              style={{ height: "384px", position: "relative" }}
+            >
+              {/* Live video */}
               <video
                 ref={videoRef}
                 autoPlay
                 playsInline
                 muted
-                width="640"
-                height="480"
-                className={`w-full h-full object-cover cursor-pointer ${isCameraActive ? '' : 'hidden'}`}
-                style={{
-                  backgroundColor: 'black',
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'cover'
-                }}
-                onClick={async () => {
-                  if (videoRef.current && videoRef.current.paused) {
-                    try {
-                      await videoRef.current.play();
-                      console.log("Video started on click");
-                    } catch (e) {
-                      console.error("Failed to play video on click:", e);
-                    }
-                  }
-                }}
+                className="absolute inset-0 w-full h-full object-cover"
+                style={{ display: isCameraActive ? "block" : "none" }}
               />
+
+              {/* Bounding-box overlay (pointer-events: none so clicks pass through) */}
               <canvas
-                ref={canvasRef}
-                className="hidden"
+                ref={overlayCanvasRef}
+                className="absolute inset-0 pointer-events-none"
+                style={{ display: isCameraActive ? "block" : "none" }}
               />
-              {isCameraActive ? (
+
+              {/* Hidden capture canvas */}
+              <canvas ref={captureCanvasRef} className="hidden" />
+
+              {/* Status badges on top of feed */}
+              {isCameraActive && (
                 <>
-                  <div className="absolute top-4 right-4">
-                    <Badge variant="default" className="bg-green-500">
+                  {/* Active indicator */}
+                  <div className="absolute top-3 right-3 flex gap-2">
+                    <Badge className="bg-green-600 text-white">
                       <Camera className="w-3 h-3 mr-1" />
-                      Active
+                      Live
                     </Badge>
+                    {isRecognizing && (
+                      <Badge className="bg-blue-600 text-white">
+                        <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                        Recognizing…
+                      </Badge>
+                    )}
                   </div>
-                  {/* Debug info */}
-                  <div className="absolute bottom-4 left-4 text-white text-xs bg-black bg-opacity-50 p-2 rounded">
-                    Camera: {isCameraActive ? 'ON' : 'OFF'} | Video: {videoRef.current ? 'REF OK' : 'REF NULL'}
-                  </div>
+
+                  {/* Face count badge */}
+                  {facesNow > 0 && (
+                    <div className="absolute top-3 left-3">
+                      <Badge className="bg-green-600 text-white">
+                        <ScanFace className="w-3 h-3 mr-1" />
+                        {facesNow} face{facesNow !== 1 ? "s" : ""} detected
+                      </Badge>
+                    </div>
+                  )}
+
+                  {/* MediaPipe not ready yet */}
+                  {!detectorReady && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/60">
+                      <div className="text-center text-white">
+                        <Loader2 className="w-8 h-8 animate-spin mx-auto mb-2" />
+                        <p className="text-sm">Initialising face detector…</p>
+                      </div>
+                    </div>
+                  )}
                 </>
-              ) : (
+              )}
+
+              {/* Inactive placeholder */}
+              {!isCameraActive && (
                 <div className="absolute inset-0 flex items-center justify-center">
                   <div className="text-center">
-                    <CameraOff className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-                    <p className="text-gray-400">Camera is not active</p>
+                    {!detectorReady ? (
+                      <>
+                        <Loader2 className="w-12 h-12 text-gray-400 animate-spin mx-auto mb-3" />
+                        <p className="text-gray-400 text-sm">Loading face detector…</p>
+                      </>
+                    ) : (
+                      <>
+                        <CameraOff className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+                        <p className="text-gray-400">Camera is not active</p>
+                      </>
+                    )}
                   </div>
                 </div>
               )}
             </div>
 
+            {/* Camera selector */}
             {cameraDevices.length > 1 && (
               <div className="mb-4">
-                <label className="text-sm font-medium mb-2 block">Select Camera</label>
+                <label className="text-sm font-medium mb-2 block">Camera</label>
                 <Select
                   value={selectedCameraId}
-                  onValueChange={(value) => {
-                    setSelectedCameraId(value);
-                    // If camera is active, restart it with new device
+                  onValueChange={(v) => {
+                    setSelectedCameraId(v);
                     if (isCameraActive) {
-                      handleToggleCamera(); // Stop current camera
-                      setTimeout(() => handleToggleCamera(), 100); // Start with new camera
+                      handleToggleCamera(); // stop
+                      setTimeout(handleToggleCamera, 150); // restart with new device
                     }
                   }}
                 >
@@ -568,9 +701,9 @@ export default function LiveCamera() {
                     <SelectValue placeholder="Choose camera" />
                   </SelectTrigger>
                   <SelectContent>
-                    {cameraDevices.map((device) => (
-                      <SelectItem key={device.deviceId} value={device.deviceId}>
-                        {device.label || `Camera ${cameraDevices.indexOf(device) + 1}`}
+                    {cameraDevices.map((d, i) => (
+                      <SelectItem key={d.deviceId} value={d.deviceId}>
+                        {d.label || `Camera ${i + 1}`}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -578,24 +711,19 @@ export default function LiveCamera() {
               </div>
             )}
 
+            {/* Controls */}
             <div className="flex gap-3">
               <Button
                 size="lg"
                 className="flex-1 rounded-xl"
                 variant={isCameraActive ? "destructive" : "default"}
                 onClick={handleToggleCamera}
-                disabled={currentSession?.status !== "open"}
+                disabled={currentSession.status !== "open" || !detectorReady}
               >
                 {isCameraActive ? (
-                  <>
-                    <CameraOff className="w-4 h-4 mr-2" />
-                    Stop Camera
-                  </>
+                  <><CameraOff className="w-4 h-4 mr-2" />Stop Camera</>
                 ) : (
-                  <>
-                    <Camera className="w-4 h-4 mr-2" />
-                    Start Camera
-                  </>
+                  <><Camera className="w-4 h-4 mr-2" />Start Camera</>
                 )}
               </Button>
               <Button
@@ -611,6 +739,7 @@ export default function LiveCamera() {
           </Card>
         </div>
 
+        {/* ── Recognition status panel ────────────────────────────────────── */}
         <Card className="p-6 rounded-xl shadow-md">
           <div className="flex items-center gap-2 mb-4">
             <Users className="w-5 h-5 text-primary" />
@@ -619,34 +748,68 @@ export default function LiveCamera() {
 
           {!isCameraActive ? (
             <p className="text-center text-muted-foreground py-8">
-              Start the camera to begin face recognition
+              {detectorReady
+                ? "Start the camera to begin face recognition"
+                : "Loading face detector…"}
             </p>
           ) : (
             <div className="space-y-4">
-              <div className="p-4 rounded-lg bg-green-50 border border-green-200">
-                <div className="flex items-center gap-2 mb-2">
-                  <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                  <span className="text-sm font-medium text-green-800">Scanning for faces...</span>
+              {/* Live scanning indicator */}
+              <div
+                className={`p-4 rounded-lg border ${
+                  facesNow > 0
+                    ? "bg-green-50 border-green-200"
+                    : "bg-yellow-50 border-yellow-200"
+                }`}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <div
+                    className={`w-2 h-2 rounded-full animate-pulse ${
+                      facesNow > 0 ? "bg-green-500" : "bg-yellow-400"
+                    }`}
+                  />
+                  <span
+                    className={`text-sm font-medium ${
+                      facesNow > 0 ? "text-green-800" : "text-yellow-800"
+                    }`}
+                  >
+                    {facesNow > 0
+                      ? `${facesNow} face${facesNow !== 1 ? "s" : ""} in frame`
+                      : "Looking for faces…"}
+                  </span>
                 </div>
-                <p className="text-xs text-green-600">
-                  Camera is active and detecting faces every 3 seconds
-                  {detectedStudents.length > 0 && ` • ${detectedStudents.length} student(s) detected`}
+                <p
+                  className={`text-xs ${
+                    facesNow > 0 ? "text-green-600" : "text-yellow-600"
+                  }`}
+                >
+                  {isRecognizing
+                    ? "Identifying student…"
+                    : facesNow > 0
+                    ? "Matching against enrolled students"
+                    : "Point the camera at student faces"}
                 </p>
               </div>
 
+              {/* Detected students list */}
               {detectedStudents.length > 0 && (
                 <div className="space-y-2">
-                  <h3 className="text-sm font-medium">Recent Detections:</h3>
-                  {detectedStudents.slice(-5).map((student, i) => (
-                    <div key={`${student.id}-${student.timestamp}`} className="p-2 rounded bg-muted text-sm">
+                  <h3 className="text-sm font-medium">
+                    Marked Present ({detectedStudents.length}):
+                  </h3>
+                  {detectedStudents.slice(-5).map((s) => (
+                    <div
+                      key={`${s.id}-${s.timestamp}`}
+                      className="p-2 rounded bg-muted text-sm"
+                    >
                       <div className="flex justify-between items-center">
-                        <span className="font-medium">{student.name}</span>
+                        <span className="font-medium">{s.name}</span>
                         <div className="flex items-center gap-2">
-                          <Badge variant="default" className="text-xs">
-                            Detected
+                          <Badge variant="default" className="text-xs bg-green-600">
+                            Present
                           </Badge>
                           <span className="text-xs text-muted-foreground">
-                            {new Date(student.timestamp).toLocaleTimeString()}
+                            {new Date(s.timestamp).toLocaleTimeString()}
                           </span>
                         </div>
                       </div>
@@ -657,20 +820,25 @@ export default function LiveCamera() {
             </div>
           )}
 
-          <div className="mt-6 pt-6 border-t border-border">
-            <div className="text-sm space-y-2">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Session Status:</span>
-                <Badge variant={currentSession.status === "open" ? "default" : "secondary"}>
-                  {currentSession.status}
-                </Badge>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Camera:</span>
-                <Badge variant={isCameraActive ? "default" : "secondary"}>
-                  {isCameraActive ? "Active" : "Inactive"}
-                </Badge>
-              </div>
+          {/* Session info footer */}
+          <div className="mt-6 pt-6 border-t border-border space-y-2 text-sm">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Session:</span>
+              <Badge variant={currentSession.status === "open" ? "default" : "secondary"}>
+                {currentSession.status}
+              </Badge>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Camera:</span>
+              <Badge variant={isCameraActive ? "default" : "secondary"}>
+                {isCameraActive ? "Active" : "Inactive"}
+              </Badge>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Detector:</span>
+              <Badge variant={detectorReady ? "default" : "secondary"}>
+                {detectorReady ? "Ready" : "Loading…"}
+              </Badge>
             </div>
           </div>
         </Card>

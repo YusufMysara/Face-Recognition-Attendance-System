@@ -42,6 +42,10 @@ def _to_response(record: AttendanceModel, student_name: Optional[str]) -> Attend
 def mark_attendance(
     session_id: int = Form(...),
     file: UploadFile = File(...),
+    # JSON array of [top, right, bottom, left] tuples pre-detected by the client
+    # (MediaPipe). When provided, server skips the slow HOG detection step and
+    # goes straight to encoding, which is significantly faster.
+    face_locations: Optional[str] = Form(None),
     current_user: User = Depends(require_role("teacher")),
     db: Session = Depends(get_db),
 ):
@@ -69,9 +73,30 @@ def mark_attendance(
 
     file.file.seek(0)
     image = face_recognition.load_image_file(file.file)
-    frame_encodings = face_recognition.face_encodings(image)
+
+    # Parse client-supplied face locations (skips server-side HOG detection)
+    known_locations = None
+    if face_locations:
+        try:
+            raw = json.loads(face_locations)
+            # face_recognition expects a list of (top, right, bottom, left) tuples
+            known_locations = [tuple(loc) for loc in raw if len(loc) == 4]
+        except Exception:
+            known_locations = None
+
+    if known_locations:
+        # Fast path: skip detection, encode only
+        frame_encodings = face_recognition.face_encodings(
+            image, known_face_locations=known_locations
+        )
+    else:
+        # Fallback: full server-side detect + encode (original behaviour)
+        frame_encodings = face_recognition.face_encodings(image)
+
+    # Return an empty list instead of 400 — the client already confirmed a face
+    # was present; failure to encode just means the crop was too blurry/small.
     if not frame_encodings:
-        raise HTTPException(status_code=400, detail="No faces detected")
+        return {"attendance": []}
 
     responses: List[AttendanceResponse] = []
     for frame_encoding in frame_encodings:

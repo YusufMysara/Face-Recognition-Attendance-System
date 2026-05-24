@@ -405,10 +405,20 @@ export const sessionsApi = {
 
 // Attendance API
 export const attendanceApi = {
-  mark: async (sessionId: number, file: Blob | File) => {
+  mark: async (
+    sessionId: number,
+    file: Blob | File,
+    // Pre-detected bounding boxes from MediaPipe in face_recognition format:
+    // [[top, right, bottom, left], ...].  When supplied the server skips its
+    // own (slow) HOG face-detection step and goes straight to encoding.
+    faceLocations?: number[][],
+  ) => {
     const formData = new FormData();
     formData.append("session_id", String(sessionId));
     formData.append("file", file);
+    if (faceLocations && faceLocations.length > 0) {
+      formData.append("face_locations", JSON.stringify(faceLocations));
+    }
 
     const token = getToken();
     const response = await fetch(`${BASE_URL}/attendance/mark`, {
