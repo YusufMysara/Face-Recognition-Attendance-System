@@ -72,9 +72,13 @@ def _warmup():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    import asyncio
-    loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, _warmup)
+    # Run warmup in a daemon thread so the server starts accepting requests
+    # immediately — login, user management, etc. are all available right away.
+    # The /ready endpoint returns false until warmup finishes, letting the
+    # frontend know when the face-recognition pipeline is ready.
+    import threading
+    t = threading.Thread(target=_warmup, daemon=True, name="insightface-warmup")
+    t.start()
     yield
 
 
