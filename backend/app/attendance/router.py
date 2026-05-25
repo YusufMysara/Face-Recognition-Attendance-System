@@ -168,7 +168,7 @@ def mark_attendance_crops(
     db: Session = Depends(get_db),
 ):
     """
-    Hybrid detection endpoint: the client (face-api.js) already detected faces
+    Hybrid detection endpoint: the client (SCRFD) already detected faces
     and sends one cropped face image per detected face.
     This endpoint only runs ArcFace recognition on each crop — no full-frame
     SCRFD scan needed, which makes it significantly faster.

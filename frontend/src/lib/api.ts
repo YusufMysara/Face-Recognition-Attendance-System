@@ -1,11 +1,6 @@
 // API utility functions for backend communication
 const BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
-interface ApiResponse<T> {
-  data?: T;
-  error?: string;
-}
-
 // Helper function to get auth token
 const getToken = (): string | null => {
   return localStorage.getItem("token");
@@ -395,38 +390,13 @@ export const sessionsApi = {
     }
     return response.json();
   },
-
-  getCourseSessions: async (courseId: number) => {
-    const response = await fetchWithAuth(`/sessions/course/${courseId}`);
-    if (!response.ok) throw new Error("Failed to fetch sessions");
-    return response.json();
-  },
 };
 
 // Attendance API
 export const attendanceApi = {
-  mark: async (sessionId: number, file: Blob | File) => {
-    const formData = new FormData();
-    formData.append("session_id", String(sessionId));
-    formData.append("file", file);
-
-    const token = getToken();
-    const response = await fetch(`${BASE_URL}/attendance/mark`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-      body: formData,
-    });
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: "Failed to mark attendance" }));
-      throw new Error(error.detail || "Failed to mark attendance");
-    }
-    return response.json();
-  },
-
   /**
-   * Hybrid mode: client detected faces with face-api.js and sends one cropped
-   * face image per detection. Backend only runs ArcFace recognition on each crop.
+   * Hybrid mode: client detects faces via SCRFD and sends one cropped face
+   * image per detection. Backend only runs ArcFace recognition on each crop.
    * Response: { recognized: [{ face_index, student_id, student_name, score }] }
    */
   markCrops: async (sessionId: number, crops: Blob[]) => {
