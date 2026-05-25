@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import * as faceapi from "@vladmandic/face-api";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -30,10 +31,15 @@ import {
   sessionsApi,
 } from "@/lib/api";
 
-/** How often (ms) a frame is sent to the backend for recognition. */
-const RECOGNITION_INTERVAL_MS = 1_500;
+// ── Constants ────────────────────────────────────────────────────────────────
+/** face-api.js detection runs locally — very fast. */
+const DETECT_INTERVAL_MS = 150;
+/** Backend recognition interval — sends face crops to InsightFace. */
+const RECOGNIZE_INTERVAL_MS = 800;
+/** SSD MobileNet model served from /public/models/. */
+const MODEL_URL = "/models";
 
-// ── Types ───────────────────────────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────────
 interface Course {
   id: number;
   name: string;
@@ -57,21 +63,18 @@ interface DetectedStudent {
   status: "detected";
 }
 
-/** Shape returned by the backend /attendance/mark endpoint. */
-interface DetectedFace {
-  bbox: [number, number, number, number]; // [x1, y1, x2, y2] in video pixels
+/** One recognition result returned by /attendance/mark-crops. */
+interface RecognitionResult {
+  face_index: number;
   student_id: number | null;
   student_name: string | null;
   score: number;
+  /** bbox in video natural pixels — attached on the frontend from face-api.js. */
+  box: { x: number; y: number; width: number; height: number };
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-/**
- * Compute the scale + offset needed to map a point from the video's natural
- * pixel space into the canvas pixel space, assuming the video uses
- * object-fit: cover inside its container.
- */
 function getObjectFitCoverTransform(video: HTMLVideoElement) {
   const cw = video.clientWidth;
   const ch = video.clientHeight;
@@ -88,7 +91,79 @@ function getObjectFitCoverTransform(video: HTMLVideoElement) {
   };
 }
 
-// ── Component ────────────────────────────────────────────────────────────────
+/**
+ * Find the recognition result whose centre is closest to the given box.
+ * Returns null if nothing is within 120 video-pixels.
+ */
+function matchRecognition(
+  box: { x: number; y: number; width: number; height: number },
+  results: RecognitionResult[],
+): RecognitionResult | null {
+  const cx = box.x + box.width / 2;
+  const cy = box.y + box.height / 2;
+  let nearest: RecognitionResult | null = null;
+  let nearestDist = 120;
+  for (const r of results) {
+    const rcx = r.box.x + r.box.width / 2;
+    const rcy = r.box.y + r.box.height / 2;
+    const dist = Math.sqrt((cx - rcx) ** 2 + (cy - rcy) ** 2);
+    if (dist < nearestDist) {
+      nearestDist = dist;
+      nearest = r;
+    }
+  }
+  return nearest;
+}
+
+/** Draw boxes for all face-api.js detections, colouring recognised ones green. */
+function drawDetectionBoxes(
+  ctx: CanvasRenderingContext2D,
+  detections: faceapi.FaceDetection[],
+  recognitionResults: RecognitionResult[],
+  scale: number,
+  offsetX: number,
+  offsetY: number,
+) {
+  detections.forEach((det) => {
+    const b = det.box;
+    const match = matchRecognition(b, recognitionResults);
+
+    const x = b.x * scale + offsetX;
+    const y = b.y * scale + offsetY;
+    const w = b.width * scale;
+    const h = b.height * scale;
+
+    const recognized  = match?.student_id != null;
+    const borderColor = recognized ? "#22c55e" : "#94a3b8";
+    const accentColor = recognized ? "#4ade80" : "#cbd5e1";
+    const labelBg     = recognized ? "#16a34a" : "#475569";
+    const label       = recognized ? match!.student_name! : "Unknown";
+
+    ctx.strokeStyle = borderColor;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, w, h);
+
+    const c = Math.min(w, h) * 0.22;
+    ctx.strokeStyle = accentColor;
+    ctx.lineWidth = 3;
+    ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(x,       y + c); ctx.lineTo(x,       y);       ctx.lineTo(x + c,   y);       ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x+w-c,   y);     ctx.lineTo(x+w,     y);       ctx.lineTo(x+w,     y + c);   ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x,       y+h-c); ctx.lineTo(x,       y+h);     ctx.lineTo(x + c,   y+h);     ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x+w-c,   y+h);   ctx.lineTo(x+w,     y+h);     ctx.lineTo(x+w,     y+h-c);   ctx.stroke();
+
+    ctx.font = "bold 11px monospace";
+    const textW = ctx.measureText(label).width + 8;
+    ctx.fillStyle = labelBg;
+    ctx.beginPath();
+    ctx.roundRect(x, y - 20, textW, 18, 3);
+    ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.fillText(label, x + 4, y - 6);
+  });
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
 export default function LiveCamera() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -106,40 +181,55 @@ export default function LiveCamera() {
   const [selectedCameraId, setSelectedCameraId] = useState<string>("");
 
   // ── Recognition state ─────────────────────────────────────────────────────
-  const [facesNow, setFacesNow] = useState(0);
+  const [modelLoaded, setModelLoaded] = useState(false);
+  const [facesNow, setFacesNow] = useState(0);       // face-api.js detections
+  const [recognizedNow, setRecognizedNow] = useState(0); // backend matches
   const [isRecognizing, setIsRecognizing] = useState(false);
 
   // ── DOM refs ──────────────────────────────────────────────────────────────
   const videoRef = useRef<HTMLVideoElement>(null);
-  /** Canvas rendered on top of the video for bounding-box overlays. */
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
-  /** Hidden canvas used to capture a JPEG frame for the backend. */
-  const captureCanvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
-  // ── Interval / recognition refs ───────────────────────────────────────────
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const isRecognizingRef = useRef(false);
+  // ── Interval refs ─────────────────────────────────────────────────────────
+  const detectIntervalRef   = useRef<ReturnType<typeof setInterval> | null>(null);
+  const recognizeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  /** Mirror of currentSession kept up-to-date inside the interval callback. */
-  const currentSessionRef = useRef<Session | null>(null);
-  useEffect(() => {
-    currentSessionRef.current = currentSession;
-  }, [currentSession]);
+  // ── Flag refs ─────────────────────────────────────────────────────────────
+  const cameraActiveRef   = useRef(false);
+  const isRecognizingRef  = useRef(false);
+  const modelLoadedRef    = useRef(false);
+
+  // ── Data refs (read inside interval callbacks) ────────────────────────────
+  const latestDetectionsRef  = useRef<faceapi.FaceDetection[]>([]);
+  const lastRecognitionRef   = useRef<RecognitionResult[]>([]);
+  const currentSessionRef    = useRef<Session | null>(null);
+  useEffect(() => { currentSessionRef.current = currentSession; }, [currentSession]);
 
   const sessionId = searchParams.get("session_id");
   const courseId  = searchParams.get("course_id");
 
-  // ── Mount: load cameras ───────────────────────────────────────────────────
+  // ── Load SSD MobileNet model once ─────────────────────────────────────────
+  useEffect(() => {
+    faceapi.nets.ssdMobilenetv1
+      .loadFromUri(MODEL_URL)
+      .then(() => {
+        modelLoadedRef.current = true;
+        setModelLoaded(true);
+      })
+      .catch((err) => console.error("Failed to load face detection model:", err));
+  }, []);
+
+  // ── Mount: load cameras; cleanup on unmount ────────────────────────────────
   useEffect(() => {
     loadCameraDevices();
     return () => {
-      stopInterval();
+      clearInterval(detectIntervalRef.current!);
+      clearInterval(recognizeIntervalRef.current!);
       streamRef.current?.getTracks().forEach((t) => t.stop());
     };
   }, []);
 
-  // ── Load camera device list ───────────────────────────────────────────────
   const loadCameraDevices = async () => {
     try {
       let devices = await navigator.mediaDevices.enumerateDevices();
@@ -157,7 +247,7 @@ export default function LiveCamera() {
     }
   };
 
-  // ── Session / course loading ──────────────────────────────────────────────
+  // ── Session / course loading ───────────────────────────────────────────────
   useEffect(() => {
     loadSessionData();
     loadCourses();
@@ -234,160 +324,104 @@ export default function LiveCamera() {
     }
   };
 
-  // ── Interval helpers ──────────────────────────────────────────────────────
-  const stopInterval = () => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
-  };
-
-  // ── Start / stop recognition interval when camera toggles ─────────────────
-  useEffect(() => {
-    if (isCameraActive) {
-      intervalRef.current = setInterval(sendFrame, RECOGNITION_INTERVAL_MS);
-    } else {
-      stopInterval();
-      const overlay = overlayCanvasRef.current;
-      if (overlay) overlay.getContext("2d")?.clearRect(0, 0, overlay.width, overlay.height);
-      setFacesNow(0);
-    }
-  }, [isCameraActive]);
-
-  // ── Camera toggle ─────────────────────────────────────────────────────────
-  const handleToggleCamera = async () => {
-    if (!currentSession) { toast.error("Please start a session first"); return; }
-    if (currentSession.status !== "open") { toast.error("Session is not active"); return; }
-
-    if (!isCameraActive) {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-            deviceId: selectedCameraId ? { exact: selectedCameraId } : undefined,
-          },
-        });
-        streamRef.current = stream;
-        const video = videoRef.current!;
-        video.srcObject = stream;
-        await video.play();
-        setIsCameraActive(true);
-      } catch (err: any) {
-        toast.error(`Camera error: ${err.message ?? err}`);
-      }
-    } else {
-      streamRef.current?.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
-      if (videoRef.current) videoRef.current.srcObject = null;
-      setIsCameraActive(false);
-      setDetectedStudents([]);
-    }
-  };
-
-  // ── Draw bounding boxes from backend response ─────────────────────────────
-  function drawBoundingBoxes(
-    ctx: CanvasRenderingContext2D,
-    faces: DetectedFace[],
-    scale: number,
-    offsetX: number,
-    offsetY: number,
-  ) {
-    faces.forEach((face) => {
-      const [x1, y1, x2, y2] = face.bbox;
-      const x = x1 * scale + offsetX;
-      const y = y1 * scale + offsetY;
-      const w = (x2 - x1) * scale;
-      const h = (y2 - y1) * scale;
-
-      const recognized = face.student_id !== null;
-      const borderColor = recognized ? "#22c55e" : "#94a3b8";
-      const accentColor = recognized ? "#4ade80" : "#cbd5e1";
-      const labelBg    = recognized ? "#16a34a" : "#475569";
-
-      // Border
-      ctx.strokeStyle = borderColor;
-      ctx.lineWidth = 2;
-      ctx.strokeRect(x, y, w, h);
-
-      // Corner accents
-      const c = Math.min(w, h) * 0.22;
-      ctx.strokeStyle = accentColor;
-      ctx.lineWidth = 3;
-      ctx.lineCap = "round";
-      ctx.beginPath(); ctx.moveTo(x, y + c);     ctx.lineTo(x, y);         ctx.lineTo(x + c, y);     ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(x + w - c, y); ctx.lineTo(x + w, y);     ctx.lineTo(x + w, y + c); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(x, y + h - c); ctx.lineTo(x, y + h);     ctx.lineTo(x + c, y + h); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(x + w - c, y + h); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w, y + h - c); ctx.stroke();
-
-      // Label
-      const label = recognized ? face.student_name! : "Unknown";
-      ctx.font = "bold 11px monospace";
-      const textW = ctx.measureText(label).width + 8;
-      ctx.fillStyle = labelBg;
-      ctx.beginPath();
-      ctx.roundRect(x, y - 20, textW, 18, 3);
-      ctx.fill();
-      ctx.fillStyle = "#fff";
-      ctx.fillText(label, x + 4, y - 6);
-    });
-  }
-
-  // ── Send frame to backend ─────────────────────────────────────────────────
-  const sendFrame = useCallback(async () => {
-    const session = currentSessionRef.current;
+  // ── Detection loop (face-api.js, client-side, ~150 ms) ────────────────────
+  const detectFaces = useCallback(async () => {
+    if (!modelLoadedRef.current || !cameraActiveRef.current) return;
     const video   = videoRef.current;
-    const capture = captureCanvasRef.current;
     const overlay = overlayCanvasRef.current;
-
-    if (!session || !video || !capture || !overlay) return;
-    if (isRecognizingRef.current) return;
+    if (!video || !overlay) return;
     if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.paused) return;
+
+    const detections = await faceapi.detectAllFaces(
+      video,
+      new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 }),
+    );
+
+    if (!cameraActiveRef.current) return; // camera stopped while awaiting
+
+    latestDetectionsRef.current = detections;
+    setFacesNow(detections.length);
+
+    // Draw boxes immediately using cached recognition labels
+    const transform = getObjectFitCoverTransform(video);
+    if (!transform) return;
+    const { scale, offsetX, offsetY, canvasW, canvasH } = transform;
+    if (overlay.width !== canvasW || overlay.height !== canvasH) {
+      overlay.width  = canvasW;
+      overlay.height = canvasH;
+    }
+    const ctx = overlay.getContext("2d")!;
+    ctx.clearRect(0, 0, canvasW, canvasH);
+    drawDetectionBoxes(ctx, detections, lastRecognitionRef.current, scale, offsetX, offsetY);
+  }, []);
+
+  // ── Recognition loop (InsightFace backend, ~800 ms) ───────────────────────
+  const recognizeFaces = useCallback(async () => {
+    if (isRecognizingRef.current || !cameraActiveRef.current) return;
+
+    const detections = latestDetectionsRef.current;
+    const session    = currentSessionRef.current;
+    const video      = videoRef.current;
+
+    // No faces detected by face-api.js → clear recognition cache, skip backend call
+    if (!detections.length || !session || !video) {
+      lastRecognitionRef.current = [];
+      setRecognizedNow(0);
+      return;
+    }
 
     isRecognizingRef.current = true;
     setIsRecognizing(true);
 
     try {
-      // Capture JPEG frame
-      capture.width  = video.videoWidth;
-      capture.height = video.videoHeight;
-      const ctx = capture.getContext("2d");
-      if (!ctx) return;
-      ctx.drawImage(video, 0, 0);
+      // Crop each detected face (with 25% padding) and convert to JPEG blob
+      const crops: Blob[] = [];
+      const boxes: RecognitionResult["box"][] = [];
 
-      const blob = await new Promise<Blob | null>((res) =>
-        capture.toBlob(res, "image/jpeg", 0.85)
-      );
-      if (!blob) return;
+      for (const det of detections) {
+        const { x, y, width, height } = det.box;
+        const pad = 0.25;
+        const cx = Math.max(0, Math.round(x - width  * pad));
+        const cy = Math.max(0, Math.round(y - height * pad));
+        const cw = Math.min(video.videoWidth  - cx, Math.round(width  * (1 + 2 * pad)));
+        const ch = Math.min(video.videoHeight - cy, Math.round(height * (1 + 2 * pad)));
 
-      // Send to InsightFace backend
-      const response = await attendanceApi.mark(session.id, blob);
-      const faces: DetectedFace[] = response.detected_faces ?? [];
+        const canvas = document.createElement("canvas");
+        canvas.width  = cw;
+        canvas.height = ch;
+        canvas.getContext("2d")!.drawImage(video, cx, cy, cw, ch, 0, 0, cw, ch);
 
-      // Update face count badge
-      setFacesNow(faces.length);
-
-      // Draw bounding boxes on overlay
-      const transform = getObjectFitCoverTransform(video);
-      if (transform) {
-        const { scale, offsetX, offsetY, canvasW, canvasH } = transform;
-        if (overlay.width !== canvasW || overlay.height !== canvasH) {
-          overlay.width  = canvasW;
-          overlay.height = canvasH;
-        }
-        const overlayCtx = overlay.getContext("2d")!;
-        overlayCtx.clearRect(0, 0, canvasW, canvasH);
-        if (faces.length > 0) {
-          drawBoundingBoxes(overlayCtx, faces, scale, offsetX, offsetY);
+        const blob = await new Promise<Blob | null>((res) =>
+          canvas.toBlob(res, "image/jpeg", 0.85),
+        );
+        if (blob) {
+          crops.push(blob);
+          boxes.push(det.box);
         }
       }
 
+      if (!crops.length) return;
+
+      const response = await attendanceApi.markCrops(session.id, crops);
+
+      // Camera stopped while request was in flight → discard stale result
+      if (!cameraActiveRef.current) return;
+
+      const results: RecognitionResult[] = (response.recognized ?? []).map((r: any) => ({
+        ...r,
+        box: boxes[r.face_index] ?? boxes[0],
+      }));
+
+      lastRecognitionRef.current = results;
+      setRecognizedNow(results.filter((r) => r.student_id !== null).length);
+
       // Update detected students list
-      if (response.attendance?.length > 0) {
-        const incoming: DetectedStudent[] = response.attendance.map((a: any) => ({
-          id: a.student_id,
-          name: a.student_name ?? `Student ${a.student_id}`,
-          timestamp: a.timestamp ?? new Date().toISOString(),
+      const matched = results.filter((r) => r.student_id !== null);
+      if (matched.length > 0) {
+        const incoming: DetectedStudent[] = matched.map((r) => ({
+          id: r.student_id!,
+          name: r.student_name!,
+          timestamp: new Date().toISOString(),
           status: "detected" as const,
         }));
         setDetectedStudents((prev) => {
@@ -405,7 +439,64 @@ export default function LiveCamera() {
     }
   }, []);
 
-  // ── Loading / no-session screens ──────────────────────────────────────────
+  // ── Camera toggle ──────────────────────────────────────────────────────────
+  const handleToggleCamera = async () => {
+    if (!currentSession)                        { toast.error("Please start a session first"); return; }
+    if (currentSession.status !== "open")       { toast.error("Session is not active");       return; }
+
+    if (!isCameraActive) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width:    { ideal: 1280 },
+            height:   { ideal: 720  },
+            deviceId: selectedCameraId ? { exact: selectedCameraId } : undefined,
+          },
+        });
+        streamRef.current = stream;
+        const video = videoRef.current!;
+        video.srcObject = stream;
+        await video.play();
+
+        cameraActiveRef.current = true;
+        setIsCameraActive(true);
+
+        // Start both loops
+        detectIntervalRef.current    = setInterval(detectFaces,    DETECT_INTERVAL_MS);
+        recognizeIntervalRef.current = setInterval(recognizeFaces, RECOGNIZE_INTERVAL_MS);
+      } catch (err: any) {
+        toast.error(`Camera error: ${err.message ?? err}`);
+      }
+    } else {
+      // Stop immediately — in-flight callbacks will bail on cameraActiveRef check
+      cameraActiveRef.current  = false;
+      isRecognizingRef.current = false;
+
+      clearInterval(detectIntervalRef.current!);
+      clearInterval(recognizeIntervalRef.current!);
+      detectIntervalRef.current    = null;
+      recognizeIntervalRef.current = null;
+
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+      if (videoRef.current) videoRef.current.srcObject = null;
+
+      // Clear overlay
+      const overlay = overlayCanvasRef.current;
+      if (overlay) overlay.getContext("2d")?.clearRect(0, 0, overlay.width, overlay.height);
+
+      latestDetectionsRef.current = [];
+      lastRecognitionRef.current  = [];
+
+      setIsCameraActive(false);
+      setIsRecognizing(false);
+      setDetectedStudents([]);
+      setFacesNow(0);
+      setRecognizedNow(0);
+    }
+  };
+
+  // ── Loading / no-session screens ───────────────────────────────────────────
   if (loading) {
     return (
       <div className="content-container flex items-center justify-center h-64">
@@ -460,7 +551,7 @@ export default function LiveCamera() {
     );
   }
 
-  // ── Main camera interface ─────────────────────────────────────────────────
+  // ── Main camera interface ──────────────────────────────────────────────────
   const currentCourse = courses.find((c) => c.id === currentSession.course_id);
 
   return (
@@ -487,7 +578,7 @@ export default function LiveCamera() {
       )}
 
       <div className="grid lg:grid-cols-3 gap-6">
-        {/* ── Camera feed ─────────────────────────────────────────────────── */}
+        {/* ── Camera feed ──────────────────────────────────────────────────── */}
         <div className="lg:col-span-2">
           <Card className="p-6 rounded-xl shadow-md">
             {/* Video + overlay container */}
@@ -495,7 +586,6 @@ export default function LiveCamera() {
               className="w-full bg-black rounded-lg mb-4 overflow-hidden"
               style={{ height: "384px", position: "relative" }}
             >
-              {/* Live video */}
               <video
                 ref={videoRef}
                 autoPlay
@@ -505,19 +595,16 @@ export default function LiveCamera() {
                 style={{ display: isCameraActive ? "block" : "none" }}
               />
 
-              {/* Bounding-box overlay */}
               <canvas
                 ref={overlayCanvasRef}
                 className="absolute inset-0 pointer-events-none"
                 style={{ display: isCameraActive ? "block" : "none" }}
               />
 
-              {/* Hidden capture canvas */}
-              <canvas ref={captureCanvasRef} className="hidden" />
-
-              {/* Status badges on top of feed */}
+              {/* Status badges */}
               {isCameraActive && (
                 <>
+                  {/* Top-right: live / recognizing */}
                   <div className="absolute top-3 right-3 flex gap-2">
                     <Badge className="bg-green-600 text-white">
                       <Camera className="w-3 h-3 mr-1" />
@@ -530,23 +617,32 @@ export default function LiveCamera() {
                       </Badge>
                     )}
                   </div>
-                  {facesNow > 0 && (
-                    <div className="absolute top-3 left-3">
-                      <Badge className="bg-green-600 text-white">
-                        <ScanFace className="w-3 h-3 mr-1" />
-                        {facesNow} face{facesNow !== 1 ? "s" : ""} detected
-                      </Badge>
-                    </div>
-                  )}
+
+                  {/* Top-left: detected / recognized counters */}
+                  <div className="absolute top-3 left-3 flex flex-col gap-1">
+                    <Badge className={facesNow > 0 ? "bg-yellow-500 text-white" : "bg-gray-600 text-white"}>
+                      <ScanFace className="w-3 h-3 mr-1" />
+                      Detected: {facesNow}
+                    </Badge>
+                    <Badge className={recognizedNow > 0 ? "bg-green-600 text-white" : "bg-gray-600 text-white"}>
+                      <Users className="w-3 h-3 mr-1" />
+                      Recognized: {recognizedNow}
+                    </Badge>
+                  </div>
                 </>
               )}
 
-              {/* Inactive placeholder */}
               {!isCameraActive && (
                 <div className="absolute inset-0 flex items-center justify-center">
                   <div className="text-center">
                     <CameraOff className="w-16 h-16 text-gray-400 mx-auto mb-4" />
                     <p className="text-gray-400">Camera is not active</p>
+                    {!modelLoaded && (
+                      <p className="text-gray-500 text-sm mt-2 flex items-center justify-center gap-1">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        Loading detection model…
+                      </p>
+                    )}
                   </div>
                 </div>
               )}
@@ -608,7 +704,7 @@ export default function LiveCamera() {
           </Card>
         </div>
 
-        {/* ── Recognition status panel ────────────────────────────────────── */}
+        {/* ── Recognition status panel ──────────────────────────────────────── */}
         <Card className="p-6 rounded-xl shadow-md">
           <div className="flex items-center gap-2 mb-4">
             <Users className="w-5 h-5 text-primary" />
@@ -621,7 +717,6 @@ export default function LiveCamera() {
             </p>
           ) : (
             <div className="space-y-4">
-              {/* Live scanning indicator */}
               <div
                 className={`p-4 rounded-lg border ${
                   facesNow > 0 ? "bg-green-50 border-green-200" : "bg-yellow-50 border-yellow-200"
@@ -652,7 +747,6 @@ export default function LiveCamera() {
                 </p>
               </div>
 
-              {/* Detected students list */}
               {detectedStudents.length > 0 && (
                 <div className="space-y-2">
                   <h3 className="text-sm font-medium">
@@ -681,7 +775,6 @@ export default function LiveCamera() {
             </div>
           )}
 
-          {/* Session info footer */}
           <div className="mt-6 pt-6 border-t border-border space-y-2 text-sm">
             <div className="flex justify-between">
               <span className="text-muted-foreground">Session:</span>
@@ -696,7 +789,13 @@ export default function LiveCamera() {
               </Badge>
             </div>
             <div className="flex justify-between">
-              <span className="text-muted-foreground">Engine:</span>
+              <span className="text-muted-foreground">Detection:</span>
+              <Badge variant={modelLoaded ? "default" : "secondary"}>
+                {modelLoaded ? "face-api.js" : "Loading…"}
+              </Badge>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Recognition:</span>
               <Badge variant="default">InsightFace</Badge>
             </div>
           </div>

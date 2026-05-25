@@ -155,6 +155,114 @@ def mark_attendance(
     return {"attendance": attendance_responses, "detected_faces": detected_faces}
 
 
+@router.post("/mark-crops")
+def mark_attendance_crops(
+    session_id: int = Form(...),
+    files: List[UploadFile] = File(...),
+    current_user: User = Depends(require_role("teacher")),
+    db: Session = Depends(get_db),
+):
+    """
+    Hybrid detection endpoint: the client (face-api.js) already detected faces
+    and sends one cropped face image per detected face.
+    This endpoint only runs ArcFace recognition on each crop — no full-frame
+    SCRFD scan needed, which makes it significantly faster.
+
+    Returns one result per crop in the same order they were sent.
+    """
+    session = _get_session(session_id, db)
+    if session.status == "submitted":
+        raise HTTPException(status_code=400, detail="Session already submitted")
+    _ensure_teacher_session(session, current_user.id)
+
+    course = db.query(Course).filter(Course.id == session.course_id).first()
+    students = (
+        db.query(User)
+        .join(StudentCourse, StudentCourse.student_id == User.id)
+        .filter(StudentCourse.course_id == course.id)
+        .all()
+    )
+
+    known: List[tuple] = []
+    for student in students:
+        if not student.face_embedding:
+            continue
+        emb = np.array(json.loads(student.face_embedding), dtype=np.float32)
+        if emb.shape[0] != 512:
+            continue
+        known.append((student, emb))
+
+    if not known:
+        raise HTTPException(
+            status_code=400,
+            detail="No valid face embeddings registered.",
+        )
+
+    SIMILARITY_THRESHOLD = 0.35
+    face_app = get_face_app()
+    results: List[Dict[str, Any]] = []
+
+    for idx, file in enumerate(files):
+        file.file.seek(0)
+        try:
+            img = bytes_to_bgr(file.file.read())
+        except Exception:
+            results.append({"face_index": idx, "student_id": None, "student_name": None, "score": 0.0})
+            continue
+
+        faces = face_app.get(img)
+        if not faces:
+            results.append({"face_index": idx, "student_id": None, "student_name": None, "score": 0.0})
+            continue
+
+        # Pick the largest face in the crop (should be the only one)
+        face = max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
+        embedding = face.embedding.astype(np.float32)
+
+        best_student: Optional[User] = None
+        best_score = 0.0
+        for student, known_emb in known:
+            score = float(np.dot(embedding, known_emb))
+            if score > best_score:
+                best_score = score
+                best_student = student
+
+        if best_student and best_score >= SIMILARITY_THRESHOLD:
+            record = (
+                db.query(AttendanceModel)
+                .filter(
+                    AttendanceModel.session_id == session_id,
+                    AttendanceModel.student_id == best_student.id,
+                )
+                .first()
+            )
+            if record:
+                record.status = "present"
+            else:
+                record = AttendanceModel(
+                    session_id=session_id,
+                    student_id=best_student.id,
+                    status="present",
+                )
+                db.add(record)
+            db.commit()
+            results.append({
+                "face_index": idx,
+                "student_id": best_student.id,
+                "student_name": best_student.name,
+                "score": round(best_score, 3),
+            })
+        else:
+            results.append({
+                "face_index": idx,
+                "student_id": None,
+                "student_name": None,
+                "score": round(best_score, 3),
+            })
+
+    return {"recognized": results}
+
+
 @router.post("/retake")
 def retake_attendance(
     payload: RetakeRequest,

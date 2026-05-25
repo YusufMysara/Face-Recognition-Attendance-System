@@ -31,4 +31,3 @@ app.include_router(admin_router)
 app.include_router(courses_router)
 app.include_router(sessions_router)
 app.include_router(attendance_router)
-

@@ -406,8 +406,6 @@ export const sessionsApi = {
 // Attendance API
 export const attendanceApi = {
   mark: async (sessionId: number, file: Blob | File) => {
-    // InsightFace on the backend handles detection + recognition in one pass.
-    // No face locations need to be sent from the client.
     const formData = new FormData();
     formData.append("session_id", String(sessionId));
     formData.append("file", file);
@@ -424,8 +422,30 @@ export const attendanceApi = {
       throw new Error(error.detail || "Failed to mark attendance");
     }
     return response.json();
-    // Response shape: { attendance: AttendanceResponse[], detected_faces: DetectedFace[] }
-    // where DetectedFace = { bbox: [x1,y1,x2,y2], student_id, student_name, score }
+  },
+
+  /**
+   * Hybrid mode: client detected faces with face-api.js and sends one cropped
+   * face image per detection. Backend only runs ArcFace recognition on each crop.
+   * Response: { recognized: [{ face_index, student_id, student_name, score }] }
+   */
+  markCrops: async (sessionId: number, crops: Blob[]) => {
+    const formData = new FormData();
+    formData.append("session_id", String(sessionId));
+    crops.forEach((crop, i) => formData.append("files", crop, `face_${i}.jpg`));
+
+    const token = getToken();
+    const response = await fetch(`${BASE_URL}/attendance/mark-crops`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: "Failed to mark attendance" }));
+      throw new Error(error.detail || "Failed to mark attendance");
+    }
+    return response.json();
   },
 
   getSessionAttendance: async (sessionId: number) => {
