@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import * as faceapi from "@vladmandic/face-api";
+import { SCRFDDetector, type ScrfdDetection } from "@/lib/scrfd";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -29,15 +29,12 @@ import {
   coursesApi,
   handleApiError,
   sessionsApi,
+  systemApi,
 } from "@/lib/api";
 
 // ── Constants ────────────────────────────────────────────────────────────────
-/** face-api.js detection runs locally — very fast. */
-const DETECT_INTERVAL_MS = 150;
-/** Backend recognition interval — sends face crops to InsightFace. */
-const RECOGNIZE_INTERVAL_MS = 800;
-/** SSD MobileNet model served from /public/models/. */
-const MODEL_URL = "/models";
+/** SCRFD-500M ONNX model served from /public/models/. */
+const MODEL_URL = "/models/scrfd_500m.onnx";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface Course {
@@ -69,8 +66,21 @@ interface RecognitionResult {
   student_id: number | null;
   student_name: string | null;
   score: number;
-  /** bbox in video natural pixels — attached on the frontend from face-api.js. */
+  /** bbox in video natural pixels — attached on the frontend from SCRFD detections. */
   box: { x: number; y: number; width: number; height: number };
+}
+
+/**
+ * A face that has been recognised with high confidence and is held in the
+ * frontend cache so we don't re-send it to the backend every cycle.
+ */
+interface ConfirmedFace {
+  /** Face centre in video pixels — updated each detection frame so we track movement. */
+  cx: number;
+  cy: number;
+  result: RecognitionResult;
+  /** Date.now() when this entry was last confirmed by the backend. */
+  confirmedAt: number;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -115,10 +125,10 @@ function matchRecognition(
   return nearest;
 }
 
-/** Draw boxes for all face-api.js detections, colouring recognised ones green. */
+/** Draw boxes for all SCRFD detections, colouring recognised ones green. */
 function drawDetectionBoxes(
   ctx: CanvasRenderingContext2D,
-  detections: faceapi.FaceDetection[],
+  detections: ScrfdDetection[],
   recognitionResults: RecognitionResult[],
   scale: number,
   offsetX: number,
@@ -182,8 +192,9 @@ export default function LiveCamera() {
 
   // ── Recognition state ─────────────────────────────────────────────────────
   const [modelLoaded, setModelLoaded] = useState(false);
-  const [facesNow, setFacesNow] = useState(0);       // face-api.js detections
-  const [recognizedNow, setRecognizedNow] = useState(0); // backend matches
+  const [backendReady, setBackendReady] = useState(false);
+  const [facesNow, setFacesNow] = useState(0);
+  const [recognizedNow, setRecognizedNow] = useState(0);
   const [isRecognizing, setIsRecognizing] = useState(false);
 
   // ── DOM refs ──────────────────────────────────────────────────────────────
@@ -191,9 +202,12 @@ export default function LiveCamera() {
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
-  // ── Interval refs ─────────────────────────────────────────────────────────
-  const detectIntervalRef   = useRef<ReturnType<typeof setInterval> | null>(null);
-  const recognizeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // ── Loop refs ─────────────────────────────────────────────────────────────
+  // Both loops are continuous chains — next iteration starts as soon as the
+  // previous one finishes (+ 100ms pause for recognition), so there's no
+  // "missed tick" wait time.
+  const detectLoopRef  = useRef<number | null>(null);
+  const isDetectingRef = useRef(false); // prevents overlapping SCRFD calls
 
   // ── Flag refs ─────────────────────────────────────────────────────────────
   const cameraActiveRef   = useRef(false);
@@ -201,31 +215,57 @@ export default function LiveCamera() {
   const modelLoadedRef    = useRef(false);
 
   // ── Data refs (read inside interval callbacks) ────────────────────────────
-  const latestDetectionsRef  = useRef<faceapi.FaceDetection[]>([]);
+  const latestDetectionsRef  = useRef<ScrfdDetection[]>([]);
   const lastRecognitionRef   = useRef<RecognitionResult[]>([]);
+  const detectorRef          = useRef<SCRFDDetector | null>(null);
   const currentSessionRef    = useRef<Session | null>(null);
+  /**
+   * Cache of faces already confirmed by the backend with high confidence.
+   * Faces in this cache are shown instantly without a backend round-trip.
+   * Entries are evicted when the face moves out of frame or TTL expires.
+   */
+  const confirmedFacesRef    = useRef<ConfirmedFace[]>([]);
   useEffect(() => { currentSessionRef.current = currentSession; }, [currentSession]);
 
   const sessionId = searchParams.get("session_id");
   const courseId  = searchParams.get("course_id");
 
-  // ── Load SSD MobileNet model once ─────────────────────────────────────────
+  // ── Load SCRFD-500M model once ────────────────────────────────────────────
   useEffect(() => {
-    faceapi.nets.ssdMobilenetv1
-      .loadFromUri(MODEL_URL)
+    const det = new SCRFDDetector();
+    detectorRef.current = det;
+    det
+      .load(MODEL_URL)
       .then(() => {
         modelLoadedRef.current = true;
         setModelLoaded(true);
       })
-      .catch((err) => console.error("Failed to load face detection model:", err));
+      .catch((err) => console.error("Failed to load SCRFD model:", err));
+  }, []);
+
+  // ── Poll backend /ready until InsightFace warmup completes ───────────────
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      while (!cancelled) {
+        const ready = await systemApi.isReady();
+        if (ready) {
+          if (!cancelled) setBackendReady(true);
+          return;
+        }
+        // Wait 2 seconds before polling again
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    };
+    poll();
+    return () => { cancelled = true; };
   }, []);
 
   // ── Mount: load cameras; cleanup on unmount ────────────────────────────────
   useEffect(() => {
     loadCameraDevices();
     return () => {
-      clearInterval(detectIntervalRef.current!);
-      clearInterval(recognizeIntervalRef.current!);
+      if (detectLoopRef.current) cancelAnimationFrame(detectLoopRef.current);
       streamRef.current?.getTracks().forEach((t) => t.stop());
     };
   }, []);
@@ -324,7 +364,9 @@ export default function LiveCamera() {
     }
   };
 
-  // ── Detection loop (face-api.js, client-side, ~150 ms) ────────────────────
+  // ── Detection loop (SCRFD + ONNX Runtime Web, continuous rAF loop) ────────
+  // Runs as fast as SCRFD can process — no fixed interval, so entering the
+  // frame is detected within one inference cycle (~50–100 ms) every time.
   const detectFaces = useCallback(async () => {
     if (!modelLoadedRef.current || !cameraActiveRef.current) return;
     const video   = videoRef.current;
@@ -332,10 +374,7 @@ export default function LiveCamera() {
     if (!video || !overlay) return;
     if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.paused) return;
 
-    const detections = await faceapi.detectAllFaces(
-      video,
-      new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 }),
-    );
+    const detections = await detectorRef.current!.detect(video);
 
     if (!cameraActiveRef.current) return; // camera stopped while awaiting
 
@@ -355,7 +394,16 @@ export default function LiveCamera() {
     drawDetectionBoxes(ctx, detections, lastRecognitionRef.current, scale, offsetX, offsetY);
   }, []);
 
-  // ── Recognition loop (InsightFace backend, ~800 ms) ───────────────────────
+  // ── Recognition cache constants ───────────────────────────────────────────
+  // A face confirmed with score ≥ CACHE_CONFIRM_THRESH is stored in
+  // confirmedFacesRef and served instantly on subsequent frames without
+  // hitting the backend.  The entry is re-checked after CACHE_TTL_MS ms
+  // or when the face moves more than CACHE_MATCH_DIST_PX pixels.
+  const CACHE_CONFIRM_THRESH = 0.45;   // min score to cache (backend threshold is 0.35)
+  const CACHE_MATCH_DIST_PX  = 100;    // max centre movement (video px) to still match
+  const CACHE_TTL_MS         = 15_000; // re-verify a cached face every 15 s
+
+  // ── Recognition loop (InsightFace backend) ────────────────────────────────
   const recognizeFaces = useCallback(async () => {
     if (isRecognizingRef.current || !cameraActiveRef.current) return;
 
@@ -363,9 +411,10 @@ export default function LiveCamera() {
     const session    = currentSessionRef.current;
     const video      = videoRef.current;
 
-    // No faces detected by face-api.js → clear recognition cache, skip backend call
+    // No faces detected by SCRFD → clear everything and skip backend call
     if (!detections.length || !session || !video) {
       lastRecognitionRef.current = [];
+      confirmedFacesRef.current  = [];
       setRecognizedNow(0);
       return;
     }
@@ -374,49 +423,139 @@ export default function LiveCamera() {
     setIsRecognizing(true);
 
     try {
-      // Crop each detected face (with 25% padding) and convert to JPEG blob
-      const crops: Blob[] = [];
-      const boxes: RecognitionResult["box"][] = [];
+      const t0  = performance.now();
+      const now = Date.now();
+
+      // ── Evict cache entries whose face has left the frame ─────────────────
+      confirmedFacesRef.current = confirmedFacesRef.current.filter((cf) =>
+        detections.some((det) => {
+          const dx = (det.box.x + det.box.width  / 2) - cf.cx;
+          const dy = (det.box.y + det.box.height / 2) - cf.cy;
+          return Math.sqrt(dx * dx + dy * dy) < CACHE_MATCH_DIST_PX * 1.5;
+        }),
+      );
+
+      // ── Split detections: served from cache vs. needs backend ─────────────
+      const toRecognize: ScrfdDetection[]   = [];
+      const cachedResults: RecognitionResult[] = [];
 
       for (const det of detections) {
+        const cx = det.box.x + det.box.width  / 2;
+        const cy = det.box.y + det.box.height / 2;
+
+        const hit = confirmedFacesRef.current.find((cf) => {
+          const dx = cx - cf.cx;
+          const dy = cy - cf.cy;
+          return (
+            Math.sqrt(dx * dx + dy * dy) < CACHE_MATCH_DIST_PX &&
+            now - cf.confirmedAt < CACHE_TTL_MS
+          );
+        });
+
+        if (hit) {
+          hit.cx = cx; // track movement
+          hit.cy = cy;
+          cachedResults.push({ ...hit.result, box: det.box });
+        } else {
+          toRecognize.push(det);
+        }
+      }
+
+      // All faces already confirmed → update overlay instantly, skip backend
+      if (!toRecognize.length) {
+        lastRecognitionRef.current = cachedResults;
+        setRecognizedNow(cachedResults.filter((r) => r.student_id !== null).length);
+        return;
+      }
+
+      // ── Phase 1: draw crops for unrecognised detections synchronously ─────
+      const canvases: HTMLCanvasElement[] = [];
+      const boxes: RecognitionResult["box"][] = [];
+
+      for (const det of toRecognize) {
         const { x, y, width, height } = det.box;
         const pad = 0.25;
-        const cx = Math.max(0, Math.round(x - width  * pad));
-        const cy = Math.max(0, Math.round(y - height * pad));
-        const cw = Math.min(video.videoWidth  - cx, Math.round(width  * (1 + 2 * pad)));
-        const ch = Math.min(video.videoHeight - cy, Math.round(height * (1 + 2 * pad)));
+        const cx2 = Math.max(0, Math.round(x - width  * pad));
+        const cy2 = Math.max(0, Math.round(y - height * pad));
+        const cw  = Math.min(video.videoWidth  - cx2, Math.round(width  * (1 + 2 * pad)));
+        const ch  = Math.min(video.videoHeight - cy2, Math.round(height * (1 + 2 * pad)));
+        if (cw < 20 || ch < 20) continue;
 
         const canvas = document.createElement("canvas");
         canvas.width  = cw;
         canvas.height = ch;
-        canvas.getContext("2d")!.drawImage(video, cx, cy, cw, ch, 0, 0, cw, ch);
-
-        const blob = await new Promise<Blob | null>((res) =>
-          canvas.toBlob(res, "image/jpeg", 0.85),
-        );
-        if (blob) {
-          crops.push(blob);
-          boxes.push(det.box);
-        }
+        canvas.getContext("2d")!.drawImage(video, cx2, cy2, cw, ch, 0, 0, cw, ch);
+        canvases.push(canvas);
+        boxes.push(det.box);
       }
+
+      if (!canvases.length) return;
+
+      // ── Phase 2: encode all canvases to JPEG synchronously ────────────────
+      // toDataURL() is synchronous — the main thread never yields so SCRFD
+      // can't interrupt between crops (~5 ms total vs ~1600 ms with toBlob).
+      const crops: Blob[] = canvases.map((canvas) => {
+        const dataURL = canvas.toDataURL("image/jpeg", 0.75);
+        const base64  = dataURL.slice("data:image/jpeg;base64,".length);
+        const binary  = atob(base64);
+        const bytes   = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        return new Blob([bytes], { type: "image/jpeg" });
+      });
+      const tCrop = performance.now();
+      console.log(`[timing] crop×${crops.length}: ${(tCrop - t0).toFixed(1)} ms`);
 
       if (!crops.length) return;
 
+      const tReq = performance.now();
       const response = await attendanceApi.markCrops(session.id, crops);
+      const tRes = performance.now();
+      console.log(`[timing] HTTP round-trip: ${(tRes - tReq).toFixed(1)} ms`);
+      console.log(`[timing] total: ${(tRes - t0).toFixed(1)} ms`);
 
-      // Camera stopped while request was in flight → discard stale result
       if (!cameraActiveRef.current) return;
 
-      const results: RecognitionResult[] = (response.recognized ?? []).map((r: any) => ({
+      const newResults: RecognitionResult[] = (response.recognized ?? []).map((r: any) => ({
         ...r,
         box: boxes[r.face_index] ?? boxes[0],
       }));
 
-      lastRecognitionRef.current = results;
-      setRecognizedNow(results.filter((r) => r.student_id !== null).length);
+      // ── Update confirmed-faces cache with high-confidence results ──────────
+      for (const r of newResults) {
+        const cached = r.student_id !== null && r.score >= CACHE_CONFIRM_THRESH;
+        console.log(
+          `[recognition] face ${r.face_index} ` +
+          `(${Math.round(r.box.width)}×${Math.round(r.box.height)}px): ` +
+          `${r.student_name ?? "Unknown"} | score=${r.score.toFixed(3)}` +
+          (cached ? " → cached ✓" : ""),
+        );
 
-      // Update detected students list
-      const matched = results.filter((r) => r.student_id !== null);
+        if (cached) {
+          const cx = r.box.x + r.box.width  / 2;
+          const cy = r.box.y + r.box.height / 2;
+          const existing = confirmedFacesRef.current.find((cf) => {
+            const dx = cx - cf.cx;
+            const dy = cy - cf.cy;
+            return Math.sqrt(dx * dx + dy * dy) < CACHE_MATCH_DIST_PX;
+          });
+          if (existing) {
+            existing.cx          = cx;
+            existing.cy          = cy;
+            existing.result      = r;
+            existing.confirmedAt = now;
+          } else {
+            confirmedFacesRef.current.push({ cx, cy, result: r, confirmedAt: now });
+          }
+        }
+      }
+
+      // Merge cached + new results for the overlay
+      const allResults = [...cachedResults, ...newResults];
+      lastRecognitionRef.current = allResults;
+      setRecognizedNow(allResults.filter((r) => r.student_id !== null).length);
+
+      // Update detected-students list (new matches only)
+      const matched = allResults.filter((r) => r.student_id !== null);
       if (matched.length > 0) {
         const incoming: DetectedStudent[] = matched.map((r) => ({
           id: r.student_id!,
@@ -461,9 +600,30 @@ export default function LiveCamera() {
         cameraActiveRef.current = true;
         setIsCameraActive(true);
 
-        // Start both loops
-        detectIntervalRef.current    = setInterval(detectFaces,    DETECT_INTERVAL_MS);
-        recognizeIntervalRef.current = setInterval(recognizeFaces, RECOGNIZE_INTERVAL_MS);
+        // Detection: continuous rAF loop — runs a new SCRFD inference as soon
+        // as the previous one finishes, so face appearance is detected in one
+        // inference cycle (~50–100 ms) regardless of when in the cycle you appear.
+        const runDetectLoop = () => {
+          if (!cameraActiveRef.current) return;
+          if (!isDetectingRef.current) {
+            isDetectingRef.current = true;
+            detectFaces().finally(() => { isDetectingRef.current = false; });
+          }
+          detectLoopRef.current = requestAnimationFrame(runDetectLoop);
+        };
+        detectLoopRef.current = requestAnimationFrame(runDetectLoop);
+
+        // Recognition: continuous chain — next request starts 100ms after the
+        // previous one finishes, so the gap = backend_time + 100ms instead of
+        // being rounded up to the nearest 500ms tick.
+        const runRecognizeLoop = async () => {
+          while (cameraActiveRef.current) {
+            await recognizeFaces();
+            // Small pause so the browser can breathe between requests
+            await new Promise((r) => setTimeout(r, 100));
+          }
+        };
+        runRecognizeLoop();
       } catch (err: any) {
         toast.error(`Camera error: ${err.message ?? err}`);
       }
@@ -471,11 +631,9 @@ export default function LiveCamera() {
       // Stop immediately — in-flight callbacks will bail on cameraActiveRef check
       cameraActiveRef.current  = false;
       isRecognizingRef.current = false;
+      isDetectingRef.current   = false;
 
-      clearInterval(detectIntervalRef.current!);
-      clearInterval(recognizeIntervalRef.current!);
-      detectIntervalRef.current    = null;
-      recognizeIntervalRef.current = null;
+      if (detectLoopRef.current) { cancelAnimationFrame(detectLoopRef.current); detectLoopRef.current = null; }
 
       streamRef.current?.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
@@ -487,6 +645,7 @@ export default function LiveCamera() {
 
       latestDetectionsRef.current = [];
       lastRecognitionRef.current  = [];
+      confirmedFacesRef.current   = [];
 
       setIsCameraActive(false);
       setIsRecognizing(false);
@@ -683,10 +842,13 @@ export default function LiveCamera() {
                 className="flex-1 rounded-xl"
                 variant={isCameraActive ? "destructive" : "default"}
                 onClick={handleToggleCamera}
-                disabled={currentSession.status !== "open"}
+                disabled={currentSession.status !== "open" || (!isCameraActive && !backendReady)}
+                title={!backendReady && !isCameraActive ? "Waiting for backend models to finish loading…" : undefined}
               >
                 {isCameraActive ? (
                   <><CameraOff className="w-4 h-4 mr-2" />Stop Camera</>
+                ) : !backendReady ? (
+                  <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Backend loading…</>
                 ) : (
                   <><Camera className="w-4 h-4 mr-2" />Start Camera</>
                 )}
@@ -791,12 +953,19 @@ export default function LiveCamera() {
             <div className="flex justify-between">
               <span className="text-muted-foreground">Detection:</span>
               <Badge variant={modelLoaded ? "default" : "secondary"}>
-                {modelLoaded ? "face-api.js" : "Loading…"}
+                {modelLoaded ? "SCRFD ✓" : "Loading…"}
               </Badge>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Recognition:</span>
-              <Badge variant="default">InsightFace</Badge>
+              <Badge variant={backendReady ? "default" : "secondary"}>
+                {backendReady ? "InsightFace ✓" : (
+                  <span className="flex items-center gap-1">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    Warming up…
+                  </span>
+                )}
+              </Badge>
             </div>
           </div>
         </Card>

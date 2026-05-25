@@ -528,6 +528,20 @@ export const notificationsApi = {
   },
 };
 
+// System readiness API
+export const systemApi = {
+  isReady: async (): Promise<boolean> => {
+    try {
+      const response = await fetch(`${BASE_URL}/ready`);
+      if (!response.ok) return false;
+      const data = await response.json();
+      return data.ready === true;
+    } catch {
+      return false;
+    }
+  },
+};
+
 // Helper function for error handling
 export const handleApiError = (error: any): string => {
   if (error?.message) return error.message;

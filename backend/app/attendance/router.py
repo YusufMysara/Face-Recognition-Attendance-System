@@ -1,4 +1,6 @@
 import json
+import logging
+import time
 from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
@@ -6,12 +8,14 @@ import numpy as np
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
+logger = logging.getLogger(__name__)
+
 from app.auth.dependencies import get_current_user, require_role
 from app.database import get_db
 from app.models import Attendance as AttendanceModel
 from app.models import Course, Session as SessionModel, StudentCourse, User
 from app.schemas.attendance import AttendanceEdit, AttendanceResponse, RetakeRequest
-from app.utils.face import bytes_to_bgr, get_face_app
+from app.utils.face import bytes_to_bgr, get_face_app, get_face_app_crops
 
 router = APIRouter(prefix="/attendance", tags=["attendance"])
 
@@ -78,7 +82,10 @@ def mark_attendance(
             continue
         emb = np.array(json.loads(student.face_embedding), dtype=np.float32)
         if emb.shape[0] != 512:
-            continue  # stale dlib embedding — skip until student re-uploads photo
+            continue
+        norm = np.linalg.norm(emb)
+        if norm > 0:
+            emb = emb / norm
         known.append((student, emb))
 
     if not known:
@@ -88,26 +95,24 @@ def mark_attendance(
                    "Students must re-upload their photos after the InsightFace migration.",
         )
 
-    # Decode uploaded JPEG/PNG → BGR numpy array
     file.file.seek(0)
     img = bytes_to_bgr(file.file.read())
 
-    # Run InsightFace: SCRFD detects faces, ArcFace embeds them
     faces = get_face_app().get(img)
     if not faces:
         return {"attendance": [], "detected_faces": []}
 
-    # ── Match each detected face against known students ──────────────────────
-    # ArcFace embeddings are L2-normalised → cosine similarity = dot product.
-    # Threshold 0.35 is equivalent to ~0.6 Euclidean used by face_recognition.
     SIMILARITY_THRESHOLD = 0.35
 
     attendance_responses: List[AttendanceResponse] = []
     detected_faces: List[Dict[str, Any]] = []
 
     for face in faces:
-        bbox = face.bbox.astype(int).tolist()          # [x1, y1, x2, y2]
-        embedding = face.embedding.astype(np.float32)  # 512-dim L2-normalised
+        bbox = face.bbox.astype(int).tolist()
+        embedding = face.embedding.astype(np.float32)
+        emb_norm = np.linalg.norm(embedding)
+        if emb_norm > 0:
+            embedding = embedding / emb_norm
 
         best_student: Optional[User] = None
         best_score = 0.0
@@ -183,6 +188,8 @@ def mark_attendance_crops(
         .all()
     )
 
+    # Pre-normalise stored embeddings once per request (L2 norm = 1).
+    # Cosine similarity = dot product only when BOTH vectors are unit vectors.
     known: List[tuple] = []
     for student in students:
         if not student.face_embedding:
@@ -190,6 +197,9 @@ def mark_attendance_crops(
         emb = np.array(json.loads(student.face_embedding), dtype=np.float32)
         if emb.shape[0] != 512:
             continue
+        norm = np.linalg.norm(emb)
+        if norm > 0:
+            emb = emb / norm
         known.append((student, emb))
 
     if not known:
@@ -199,10 +209,12 @@ def mark_attendance_crops(
         )
 
     SIMILARITY_THRESHOLD = 0.35
-    face_app = get_face_app()
+    face_app = get_face_app_crops()
     results: List[Dict[str, Any]] = []
 
+    t_start = time.perf_counter()
     for idx, file in enumerate(files):
+        t_crop = time.perf_counter()
         file.file.seek(0)
         try:
             img = bytes_to_bgr(file.file.read())
@@ -210,14 +222,25 @@ def mark_attendance_crops(
             results.append({"face_index": idx, "student_id": None, "student_name": None, "score": 0.0})
             continue
 
-        faces = face_app.get(img)
+        # max_num=1: only process the single largest face in the crop.
+        # Without this, SCRFD may return multiple candidates and ArcFace runs
+        # once per candidate, multiplying inference time needlessly.
+        faces = face_app.get(img, max_num=1)
+        t_insight = time.perf_counter()
+        logger.info(f"[timing] crop {idx}: InsightFace={1000*(t_insight-t_crop):.0f} ms")
+
         if not faces:
             results.append({"face_index": idx, "student_id": None, "student_name": None, "score": 0.0})
             continue
 
         # Pick the largest face in the crop (should be the only one)
         face = max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
+
+        # Explicitly L2-normalise the query embedding so dot product = cosine similarity
         embedding = face.embedding.astype(np.float32)
+        emb_norm = np.linalg.norm(embedding)
+        if emb_norm > 0:
+            embedding = embedding / emb_norm
 
         best_student: Optional[User] = None
         best_score = 0.0
@@ -226,6 +249,12 @@ def mark_attendance_crops(
             if score > best_score:
                 best_score = score
                 best_student = student
+
+        logger.info(
+            f"[recognition] crop {idx}: best_match={best_student.name if best_student else 'none'} "
+            f"score={best_score:.3f} threshold={SIMILARITY_THRESHOLD} "
+            f"→ {'MATCH' if best_student and best_score >= SIMILARITY_THRESHOLD else 'NO MATCH'}"
+        )
 
         if best_student and best_score >= SIMILARITY_THRESHOLD:
             record = (
@@ -260,6 +289,11 @@ def mark_attendance_crops(
                 "score": round(best_score, 3),
             })
 
+    t_end = time.perf_counter()
+    logger.info(
+        f"[timing] mark-crops total: {len(files)} crops in {1000*(t_end-t_start):.0f} ms "
+        f"({1000*(t_end-t_start)/max(len(files),1):.0f} ms/crop avg)"
+    )
     return {"recognized": results}
 
 
