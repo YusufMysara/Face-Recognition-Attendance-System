@@ -1,0 +1,189 @@
+"""Pure data-access for the Attendance domain."""
+from typing import List, Optional, Tuple
+
+from sqlalchemy.orm import Session
+
+from app.models import (
+    Attendance as AttendanceModel,
+    Course,
+    Session as SessionModel,
+    StudentCourse,
+    User,
+)
+
+
+class AttendanceRepository:
+    def __init__(self, db: Session):
+        self.db = db
+
+    # ── session helpers (attendance always needs session context) ──────────────
+
+    def get_session(self, session_id: int) -> Optional[SessionModel]:
+        return (
+            self.db.query(SessionModel)
+            .filter(SessionModel.id == session_id)
+            .first()
+        )
+
+    def get_course_students(self, course_id: int) -> List[User]:
+        """All enrolled students for a course (used by recognition endpoints)."""
+        return (
+            self.db.query(User)
+            .join(StudentCourse, StudentCourse.student_id == User.id)
+            .filter(StudentCourse.course_id == course_id)
+            .all()
+        )
+
+    # ── attendance lookups ────────────────────────────────────────────────────
+
+    def get_by_id(self, attendance_id: int) -> Optional[AttendanceModel]:
+        return (
+            self.db.query(AttendanceModel)
+            .filter(AttendanceModel.id == attendance_id)
+            .first()
+        )
+
+    def get_record(
+        self, session_id: int, student_id: int
+    ) -> Optional[AttendanceModel]:
+        return (
+            self.db.query(AttendanceModel)
+            .filter(
+                AttendanceModel.session_id == session_id,
+                AttendanceModel.student_id == student_id,
+            )
+            .first()
+        )
+
+    def get_for_session(
+        self, session_id: int
+    ) -> List[Tuple[AttendanceModel, str]]:
+        """Returns (record, student_name) rows for a session."""
+        return (
+            self.db.query(AttendanceModel, User.name)
+            .join(User, AttendanceModel.student_id == User.id)
+            .filter(AttendanceModel.session_id == session_id)
+            .all()
+        )
+
+    def get_student_name(self, student_id: int) -> Optional[str]:
+        return self.db.query(User.name).filter(User.id == student_id).scalar()
+
+    def get_student_by_id(self, student_id: int) -> Optional[User]:
+        return (
+            self.db.query(User)
+            .filter(User.id == student_id, User.role == "student")
+            .first()
+        )
+
+    def get_student_attendance_history(self, student_id: int) -> List[Tuple]:
+        """Returns (record, student_name, course_name, course_id, session_started_at)."""
+        return (
+            self.db.query(
+                AttendanceModel,
+                User.name,
+                Course.name,
+                SessionModel.course_id,
+                SessionModel.started_at,
+            )
+            .join(User, AttendanceModel.student_id == User.id)
+            .join(SessionModel, AttendanceModel.session_id == SessionModel.id)
+            .join(Course, SessionModel.course_id == Course.id)
+            .filter(AttendanceModel.student_id == student_id)
+            .order_by(AttendanceModel.timestamp.desc())
+            .all()
+        )
+
+    def get_sessions_for_course_ordered(self, course_id: int) -> List[SessionModel]:
+        return (
+            self.db.query(SessionModel)
+            .filter(SessionModel.course_id == course_id)
+            .order_by(SessionModel.started_at.asc())
+            .all()
+        )
+
+    def get_all_sessions(self) -> List[SessionModel]:
+        return self.db.query(SessionModel).all()
+
+    def get_enrollment(
+        self, course_id: int, student_id: int
+    ) -> Optional[StudentCourse]:
+        return (
+            self.db.query(StudentCourse)
+            .filter(
+                StudentCourse.course_id == course_id,
+                StudentCourse.student_id == student_id,
+            )
+            .first()
+        )
+
+    def get_all_with_joins(self) -> List[Tuple]:
+        """Returns (record, student_name, course_name) for admin view."""
+        return (
+            self.db.query(AttendanceModel, User.name, Course.name)
+            .join(User, AttendanceModel.student_id == User.id)
+            .join(SessionModel, AttendanceModel.session_id == SessionModel.id)
+            .join(Course, SessionModel.course_id == Course.id)
+            .all()
+        )
+
+    def get_submitted_sessions_for_course(
+        self, course_id: int
+    ) -> List[SessionModel]:
+        return (
+            self.db.query(SessionModel)
+            .filter(
+                SessionModel.course_id == course_id,
+                SessionModel.status == "submitted",
+            )
+            .all()
+        )
+
+    def count_present(self, student_id: int, session_ids: List[int]) -> int:
+        return (
+            self.db.query(AttendanceModel)
+            .filter(
+                AttendanceModel.student_id == student_id,
+                AttendanceModel.session_id.in_(session_ids),
+                AttendanceModel.status == "present",
+            )
+            .count()
+        )
+
+    def get_enrollments_for_student(self, student_id: int) -> List[StudentCourse]:
+        return (
+            self.db.query(StudentCourse)
+            .filter(StudentCourse.student_id == student_id)
+            .all()
+        )
+
+    def get_course_by_id(self, course_id: int) -> Optional[Course]:
+        return self.db.query(Course).filter(Course.id == course_id).first()
+
+    # ── mutations ─────────────────────────────────────────────────────────────
+
+    def upsert_present(
+        self, session_id: int, student_id: int
+    ) -> AttendanceModel:
+        record = self.get_record(session_id, student_id)
+        if record:
+            record.status = "present"
+        else:
+            record = AttendanceModel(
+                session_id=session_id,
+                student_id=student_id,
+                status="present",
+            )
+            self.db.add(record)
+        self.db.commit()
+        return record
+
+    def delete_for_session(self, session_id: int) -> None:
+        self.db.query(AttendanceModel).filter(
+            AttendanceModel.session_id == session_id
+        ).delete()
+
+    def save(self, record: AttendanceModel) -> AttendanceModel:
+        self.db.commit()
+        self.db.refresh(record)
+        return record
