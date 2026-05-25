@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { FaceDetector, FilesetResolver } from "@mediapipe/tasks-vision";
-import type { Detection } from "@mediapipe/tasks-vision";
+import * as faceapi from "@vladmandic/face-api";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -33,14 +32,11 @@ import {
   sessionsApi,
 } from "@/lib/api";
 
-// ── MediaPipe config ────────────────────────────────────────────────────────
-const MEDIAPIPE_WASM =
-  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm";
-// Short-range model: fast, accurate up to ~2 m.
-// minDetectionConfidence is lowered so far/small faces still register.
-const MODEL_URL =
-  "https://storage.googleapis.com/mediapipe-models/face_detector/" +
-  "blaze_face_short_range/float16/1/blaze_face_short_range.tflite";
+// ── face-api.js config ───────────────────────────────────────────────────────
+// SSD MobileNet V1 is designed for multi-scale detection — it natively handles
+// faces at various distances without any upscaling tricks.
+const FACEAPI_MODEL_URL =
+  "https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model";
 
 /** Minimum ms between successive recognition API calls. */
 const RECOGNITION_COOLDOWN_MS = 1_500;
@@ -109,7 +105,7 @@ export default function LiveCamera() {
   const [cameraDevices, setCameraDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState<string>("");
 
-  // ── MediaPipe / detection state ───────────────────────────────────────────
+  // ── face-api / detection state ────────────────────────────────────────────
   const [detectorReady, setDetectorReady] = useState(false);
   const [facesNow, setFacesNow] = useState(0);         // faces in current frame
   const [isRecognizing, setIsRecognizing] = useState(false);
@@ -122,8 +118,7 @@ export default function LiveCamera() {
   const captureCanvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
-  // ── MediaPipe refs ────────────────────────────────────────────────────────
-  const faceDetectorRef = useRef<FaceDetector | null>(null);
+  // ── Detection refs ────────────────────────────────────────────────────────
   const animFrameRef = useRef<number | null>(null);
   const detectionActiveRef = useRef(false);
   const lastRecognitionRef = useRef(0);
@@ -138,7 +133,7 @@ export default function LiveCamera() {
   const sessionId = searchParams.get("session_id");
   const courseId = searchParams.get("course_id");
 
-  // ── Initialise MediaPipe on mount ─────────────────────────────────────────
+  // ── Initialise face-api on mount ─────────────────────────────────────────
   useEffect(() => {
     initFaceDetector();
     loadCameraDevices();
@@ -152,28 +147,13 @@ export default function LiveCamera() {
   }, []);
 
   const initFaceDetector = async () => {
-    const tryInit = async (delegate: "GPU" | "CPU") => {
-      const vision = await FilesetResolver.forVisionTasks(MEDIAPIPE_WASM);
-      faceDetectorRef.current = await FaceDetector.createFromOptions(vision, {
-        baseOptions: { modelAssetPath: MODEL_URL, delegate },
-        runningMode: "VIDEO",
-        // Lower confidence → catches faces that are small / far from camera
-        minDetectionConfidence: 0.35,
-        minSuppressionThreshold: 0.3,
-      });
-    };
-
     try {
-      await tryInit("GPU");
-    } catch {
-      try {
-        await tryInit("CPU");
-      } catch (err) {
-        console.error("MediaPipe FaceDetector failed to initialise:", err);
-        return;
-      }
+      // SSD MobileNet V1 — best accuracy across a range of face sizes/distances
+      await faceapi.nets.ssdMobilenetv1.loadFromUri(FACEAPI_MODEL_URL);
+      setDetectorReady(true);
+    } catch (err) {
+      console.error("face-api failed to load model:", err);
     }
-    setDetectorReady(true);
   };
 
   // ── Load camera device list ───────────────────────────────────────────────
@@ -334,53 +314,55 @@ export default function LiveCamera() {
     }
   }, [isCameraActive, detectorReady]);
 
-  // ── Core detection loop (runs at ~60 fps via requestAnimationFrame) ───────
-  // All mutable dependencies are accessed through refs so the function is
-  // stable and never goes stale inside the rAF callback chain.
-  const detectionLoop = useCallback(() => {
+  // ── Core detection loop ───────────────────────────────────────────────────
+  // Async: awaits each face-api detection, then schedules the next frame.
+  // This naturally runs at the model's throughput (~15-30 fps on GPU) without
+  // queueing multiple detections on top of each other.
+  // All mutable state is accessed through refs so the callback is stable.
+  const detectionLoop = useCallback(async () => {
     if (!detectionActiveRef.current) return;
 
-    const video = videoRef.current;
+    const video   = videoRef.current;
     const overlay = overlayCanvasRef.current;
-    const detector = faceDetectorRef.current;
 
-    // Wait until video is actually playing
     if (
-      !video ||
-      !overlay ||
-      !detector ||
+      !video || !overlay ||
       video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
       video.paused
     ) {
-      animFrameRef.current = requestAnimationFrame(detectionLoop);
+      animFrameRef.current = requestAnimationFrame(() => void detectionLoop());
       return;
     }
 
     // Keep the overlay canvas sized to the video's rendered CSS pixels
     const transform = getObjectFitCoverTransform(video);
     if (!transform) {
-      animFrameRef.current = requestAnimationFrame(detectionLoop);
+      animFrameRef.current = requestAnimationFrame(() => void detectionLoop());
       return;
     }
     const { scale, offsetX, offsetY, canvasW, canvasH } = transform;
     if (overlay.width !== canvasW || overlay.height !== canvasH) {
-      overlay.width = canvasW;
+      overlay.width  = canvasW;
       overlay.height = canvasH;
     }
 
     const ctx = overlay.getContext("2d")!;
     ctx.clearRect(0, 0, canvasW, canvasH);
 
-    // ── Run MediaPipe face detection ────────────────────────────────────────
-    const now = performance.now();
-    const { detections } = detector.detectForVideo(video, now);
+    // ── face-api SSD MobileNet detection ────────────────────────────────────
+    // SSD MobileNet V1 uses a feature-pyramid network and handles multiple
+    // scales natively — no manual upscaling needed.
+    const detections = await faceapi.detectAllFaces(
+      video,
+      new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 }),
+    );
+
     setFacesNow(detections.length);
 
     if (detections.length > 0) {
       drawBoundingBoxes(ctx, detections, scale, offsetX, offsetY);
 
-      // Trigger recognition when the cooldown has elapsed and we're not
-      // already waiting for a previous API response
+      const now = performance.now();
       if (
         now - lastRecognitionRef.current > RECOGNITION_COOLDOWN_MS &&
         !isRecognizingRef.current
@@ -391,28 +373,24 @@ export default function LiveCamera() {
     }
 
     if (detectionActiveRef.current) {
-      animFrameRef.current = requestAnimationFrame(detectionLoop);
+      animFrameRef.current = requestAnimationFrame(() => void detectionLoop());
     }
   }, []); // stable — all deps go through refs
 
   // ── Draw bounding boxes ───────────────────────────────────────────────────
   function drawBoundingBoxes(
     ctx: CanvasRenderingContext2D,
-    detections: Detection[],
+    detections: faceapi.FaceDetection[],
     scale: number,
     offsetX: number,
     offsetY: number,
   ) {
     detections.forEach((det) => {
-      const bb = det.boundingBox!;
-      const x = bb.originX * scale + offsetX;
-      const y = bb.originY * scale + offsetY;
-      const w = bb.width * scale;
-      const h = bb.height * scale;
-
-      // Semi-transparent fill
-      ctx.fillStyle = "rgba(34, 197, 94, 0.08)";
-      ctx.fillRect(x, y, w, h);
+      const { x: ox, y: oy, width, height } = det.box;
+      const x = ox * scale + offsetX;
+      const y = oy * scale + offsetY;
+      const w = width  * scale;
+      const h = height * scale;
 
       // Solid border
       ctx.strokeStyle = "#22c55e";
@@ -434,8 +412,7 @@ export default function LiveCamera() {
       ctx.beginPath(); ctx.moveTo(x + w - c, y + h); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w, y + h - c); ctx.stroke();
 
       // Confidence badge above box
-      const conf = det.categories[0]?.score ?? 0;
-      const label = `${(conf * 100).toFixed(0)}%`;
+      const label = `${(det.score * 100).toFixed(0)}%`;
       ctx.font = "bold 11px monospace";
       const textW = ctx.measureText(label).width + 8;
       ctx.fillStyle = "#16a34a";
@@ -448,7 +425,7 @@ export default function LiveCamera() {
   }
 
   // ── Send frame to backend for recognition ─────────────────────────────────
-  const sendForRecognition = useCallback(async (detections: Detection[]) => {
+  const sendForRecognition = useCallback(async (detections: faceapi.FaceDetection[]) => {
     const session = currentSessionRef.current;
     if (!session || !videoRef.current || !captureCanvasRef.current) return;
     if (isRecognizingRef.current) return;
@@ -465,19 +442,17 @@ export default function LiveCamera() {
       if (!ctx) return;
       ctx.drawImage(video, 0, 0);
 
-      // Convert MediaPipe bounding boxes → face_recognition format:
+      // Convert face-api bounding boxes → face_recognition format:
       // [top, right, bottom, left]  (all in natural video pixels)
-      const faceLocations = detections
-        .filter((d) => d.boundingBox)
-        .map((d) => {
-          const { originX, originY, width, height } = d.boundingBox!;
-          return [
-            Math.max(0, Math.round(originY)),                     // top
-            Math.min(video.videoWidth, Math.round(originX + width)),  // right
-            Math.min(video.videoHeight, Math.round(originY + height)), // bottom
-            Math.max(0, Math.round(originX)),                     // left
-          ];
-        });
+      const faceLocations = detections.map((d) => {
+        const { x, y, width, height } = d.box;
+        return [
+          Math.max(0, Math.round(y)),                            // top
+          Math.min(video.videoWidth,  Math.round(x + width)),   // right
+          Math.min(video.videoHeight, Math.round(y + height)),  // bottom
+          Math.max(0, Math.round(x)),                            // left
+        ];
+      });
 
       const blob = await new Promise<Blob | null>((res) =>
         capture.toBlob(res, "image/jpeg", 0.85)
@@ -651,7 +626,7 @@ export default function LiveCamera() {
                     </div>
                   )}
 
-                  {/* MediaPipe not ready yet */}
+                  {/* face-api model not ready yet */}
                   {!detectorReady && (
                     <div className="absolute inset-0 flex items-center justify-center bg-black/60">
                       <div className="text-center text-white">
