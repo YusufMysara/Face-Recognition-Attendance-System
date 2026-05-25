@@ -1,8 +1,8 @@
 import json
 from collections import defaultdict
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
-import face_recognition
+import numpy as np
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
@@ -11,6 +11,7 @@ from app.database import get_db
 from app.models import Attendance as AttendanceModel
 from app.models import Course, Session as SessionModel, StudentCourse, User
 from app.schemas.attendance import AttendanceEdit, AttendanceResponse, RetakeRequest
+from app.utils.face import bytes_to_bgr, get_face_app
 
 router = APIRouter(prefix="/attendance", tags=["attendance"])
 
@@ -38,17 +39,23 @@ def _to_response(record: AttendanceModel, student_name: Optional[str]) -> Attend
     )
 
 
-@router.post("/mark", response_model=Dict[str, List[AttendanceResponse]])
+@router.post("/mark")
 def mark_attendance(
     session_id: int = Form(...),
     file: UploadFile = File(...),
-    # JSON array of [top, right, bottom, left] tuples pre-detected by the client
-    # (MediaPipe). When provided, server skips the slow HOG detection step and
-    # goes straight to encoding, which is significantly faster.
-    face_locations: Optional[str] = Form(None),
     current_user: User = Depends(require_role("teacher")),
     db: Session = Depends(get_db),
 ):
+    """
+    Detect and recognise all faces in the uploaded frame using InsightFace
+    (SCRFD detection + ArcFace recognition).
+
+    Returns:
+      attendance     – list of AttendanceResponse for recognised students
+      detected_faces – list of every detected face (recognised or not) with
+                       bbox [x1,y1,x2,y2], student info, and similarity score,
+                       so the frontend can draw labelled bounding boxes.
+    """
     session = _get_session(session_id, db)
     if session.status == "submitted":
         raise HTTPException(status_code=400, detail="Session already submitted")
@@ -61,56 +68,68 @@ def mark_attendance(
         .filter(StudentCourse.course_id == course.id)
         .all()
     )
-    known_embeddings = []
-    student_map = []
+
+    # Build list of (student, 512-dim ArcFace embedding).
+    # Skip embeddings that are not 512-dim (old dlib 128-dim embeddings from
+    # the previous face_recognition backend — they need to be re-enrolled).
+    known: List[tuple] = []
     for student in students:
-        if student.face_embedding:
-            known_embeddings.append(json.loads(student.face_embedding))
-            student_map.append(student)
+        if not student.face_embedding:
+            continue
+        emb = np.array(json.loads(student.face_embedding), dtype=np.float32)
+        if emb.shape[0] != 512:
+            continue  # stale dlib embedding — skip until student re-uploads photo
+        known.append((student, emb))
 
-    if not known_embeddings:
-        raise HTTPException(status_code=400, detail="No embeddings registered")
+    if not known:
+        raise HTTPException(
+            status_code=400,
+            detail="No valid face embeddings registered. "
+                   "Students must re-upload their photos after the InsightFace migration.",
+        )
 
+    # Decode uploaded JPEG/PNG → BGR numpy array
     file.file.seek(0)
-    image = face_recognition.load_image_file(file.file)
+    img = bytes_to_bgr(file.file.read())
 
-    # Parse client-supplied face locations (skips server-side HOG detection)
-    known_locations = None
-    if face_locations:
-        try:
-            raw = json.loads(face_locations)
-            # face_recognition expects a list of (top, right, bottom, left) tuples
-            known_locations = [tuple(loc) for loc in raw if len(loc) == 4]
-        except Exception:
-            known_locations = None
+    # Run InsightFace: SCRFD detects faces, ArcFace embeds them
+    faces = get_face_app().get(img)
+    if not faces:
+        return {"attendance": [], "detected_faces": []}
 
-    if known_locations:
-        # Fast path: skip detection, encode only
-        frame_encodings = face_recognition.face_encodings(
-            image, known_face_locations=known_locations
-        )
-    else:
-        # Fallback: full server-side detect + encode (original behaviour)
-        frame_encodings = face_recognition.face_encodings(image)
+    # ── Match each detected face against known students ──────────────────────
+    # ArcFace embeddings are L2-normalised → cosine similarity = dot product.
+    # Threshold 0.35 is equivalent to ~0.6 Euclidean used by face_recognition.
+    SIMILARITY_THRESHOLD = 0.35
 
-    # Return an empty list instead of 400 — the client already confirmed a face
-    # was present; failure to encode just means the crop was too blurry/small.
-    if not frame_encodings:
-        return {"attendance": []}
+    attendance_responses: List[AttendanceResponse] = []
+    detected_faces: List[Dict[str, Any]] = []
 
-    responses: List[AttendanceResponse] = []
-    for frame_encoding in frame_encodings:
-        matches = face_recognition.compare_faces(
-            known_embeddings, frame_encoding, tolerance=0.5
-        )
-        matched_indexes = [idx for idx, matched in enumerate(matches) if matched]
-        for idx in matched_indexes:
-            student = student_map[idx]
+    for face in faces:
+        bbox = face.bbox.astype(int).tolist()          # [x1, y1, x2, y2]
+        embedding = face.embedding.astype(np.float32)  # 512-dim L2-normalised
+
+        best_student: Optional[User] = None
+        best_score = 0.0
+        for student, known_emb in known:
+            score = float(np.dot(embedding, known_emb))
+            if score > best_score:
+                best_score = score
+                best_student = student
+
+        matched_id: Optional[int] = None
+        matched_name: Optional[str] = None
+
+        if best_student and best_score >= SIMILARITY_THRESHOLD:
+            matched_id = best_student.id
+            matched_name = best_student.name
+
+            # Upsert attendance record
             record = (
                 db.query(AttendanceModel)
                 .filter(
                     AttendanceModel.session_id == session_id,
-                    AttendanceModel.student_id == student.id,
+                    AttendanceModel.student_id == best_student.id,
                 )
                 .first()
             )
@@ -119,13 +138,21 @@ def mark_attendance(
             else:
                 record = AttendanceModel(
                     session_id=session_id,
-                    student_id=student.id,
+                    student_id=best_student.id,
                     status="present",
                 )
                 db.add(record)
             db.commit()
-            responses.append(_to_response(record, student.name))
-    return {"attendance": responses}
+            attendance_responses.append(_to_response(record, best_student.name))
+
+        detected_faces.append({
+            "bbox": bbox,
+            "student_id": matched_id,
+            "student_name": matched_name,
+            "score": round(best_score, 3),
+        })
+
+    return {"attendance": attendance_responses, "detected_faces": detected_faces}
 
 
 @router.post("/retake")

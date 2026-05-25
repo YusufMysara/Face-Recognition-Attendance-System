@@ -405,27 +405,17 @@ export const sessionsApi = {
 
 // Attendance API
 export const attendanceApi = {
-  mark: async (
-    sessionId: number,
-    file: Blob | File,
-    // Pre-detected bounding boxes from MediaPipe in face_recognition format:
-    // [[top, right, bottom, left], ...].  When supplied the server skips its
-    // own (slow) HOG face-detection step and goes straight to encoding.
-    faceLocations?: number[][],
-  ) => {
+  mark: async (sessionId: number, file: Blob | File) => {
+    // InsightFace on the backend handles detection + recognition in one pass.
+    // No face locations need to be sent from the client.
     const formData = new FormData();
     formData.append("session_id", String(sessionId));
     formData.append("file", file);
-    if (faceLocations && faceLocations.length > 0) {
-      formData.append("face_locations", JSON.stringify(faceLocations));
-    }
 
     const token = getToken();
     const response = await fetch(`${BASE_URL}/attendance/mark`, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+      headers: { Authorization: `Bearer ${token}` },
       body: formData,
     });
 
@@ -434,6 +424,8 @@ export const attendanceApi = {
       throw new Error(error.detail || "Failed to mark attendance");
     }
     return response.json();
+    // Response shape: { attendance: AttendanceResponse[], detected_faces: DetectedFace[] }
+    // where DetectedFace = { bbox: [x1,y1,x2,y2], student_id, student_name, score }
   },
 
   getSessionAttendance: async (sessionId: number) => {
