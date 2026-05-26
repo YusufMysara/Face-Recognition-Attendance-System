@@ -41,12 +41,14 @@ class SessionService:
             raise HTTPException(status_code=403, detail="Teachers only")
         if course.teacher_id != current_user.id:
             raise HTTPException(status_code=403, detail="Not your course")
-        return self.repo.create(
+        session = self.repo.create(
             course_id=payload.course_id,
             teacher_id=current_user.id,
             status="open",
             started_at=datetime.utcnow(),
         )
+        self.db.commit()
+        return session
 
     def end(self, session_id: int, current_user: User) -> SessionModel:
         session = self._require_session(session_id)
@@ -57,7 +59,9 @@ class SessionService:
             )
         session.status = "closed"
         session.ended_at = datetime.utcnow()
-        return self.repo.save(session)
+        session = self.repo.save(session)
+        self.db.commit()
+        return session
 
     def continue_session(self, session_id: int, current_user: User) -> SessionModel:
         session = self._require_session(session_id)
@@ -68,7 +72,9 @@ class SessionService:
             )
         session.status = "open"
         session.ended_at = None
-        return self.repo.save(session)
+        session = self.repo.save(session)
+        self.db.commit()
+        return session
 
     def submit(self, session_id: int, current_user: User) -> SessionModel:
         session = self._require_session(session_id)
@@ -81,12 +87,15 @@ class SessionService:
 
         session.status = "submitted"
         session.ended_at = session.ended_at or datetime.utcnow()
-        return self.repo.save(session)
+        session = self.repo.save(session)
+        self.db.commit()
+        return session
 
     def delete(self, session_id: int, current_user: User) -> dict:
         session = self._require_session(session_id)
         self._require_owner(session, current_user.id)
         self.repo.delete(session)
+        self.db.commit()
         return {"detail": "Session deleted"}
 
     # ── read endpoints ────────────────────────────────────────────────────────

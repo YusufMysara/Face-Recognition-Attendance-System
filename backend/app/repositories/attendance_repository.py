@@ -175,7 +175,24 @@ class AttendanceRepository:
                 status="present",
             )
             self.db.add(record)
-        self.db.commit()
+        return record
+
+    def upsert_manual(
+        self, session_id: int, student_id: int, status: str
+    ) -> AttendanceModel:
+        """Create or update a manual attendance record (no commit — caller commits)."""
+        record = self.get_record(session_id, student_id)
+        if record:
+            record.status = status
+        else:
+            record = AttendanceModel(
+                session_id=session_id,
+                student_id=student_id,
+                status=status,
+            )
+            self.db.add(record)
+        self.db.flush()
+        self.db.refresh(record)
         return record
 
     def delete_for_session(self, session_id: int) -> None:
@@ -184,6 +201,6 @@ class AttendanceRepository:
         ).delete()
 
     def save(self, record: AttendanceModel) -> AttendanceModel:
-        self.db.commit()
+        self.db.flush()
         self.db.refresh(record)
         return record

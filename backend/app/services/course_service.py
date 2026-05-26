@@ -26,7 +26,9 @@ class CourseService:
             teacher = self._get_user_by_role(payload.teacher_id, "teacher")
             if not teacher:
                 raise HTTPException(status_code=404, detail="Teacher not found")
-        return self.repo.create(**payload.dict())
+        course = self.repo.create(**payload.dict())
+        self.db.commit()
+        return course
 
     def list_courses(self, current_user: User) -> List[Course]:
         if current_user.role == "teacher":
@@ -53,7 +55,9 @@ class CourseService:
             raise HTTPException(status_code=404, detail="Course not found")
         for key, value in payload.dict(exclude_unset=True).items():
             setattr(course, key, value)
-        return self.repo.save(course)
+        course = self.repo.save(course)
+        self.db.commit()
+        return course
 
     def delete_course(self, course_id: int) -> dict:
         course = self.repo.get_by_id(course_id)
@@ -64,6 +68,7 @@ class CourseService:
         self.repo.delete_sessions(course_id)
         self.repo.delete_enrollments(course_id)
         self.repo.delete(course)
+        self.db.commit()
         return {"detail": "Course deleted"}
 
     # ── enrolment management ──────────────────────────────────────────────────
@@ -76,6 +81,7 @@ class CourseService:
         if self.repo.get_enrollment(payload.student_id, payload.course_id):
             raise HTTPException(status_code=400, detail="Already assigned")
         self.repo.add_enrollment(payload.student_id, payload.course_id)
+        self.db.commit()
         return {"detail": "Student assigned"}
 
     def remove_student(self, payload: CourseAssignment) -> dict:
@@ -89,6 +95,7 @@ class CourseService:
                 status_code=400, detail="Student not assigned to course"
             )
         self.repo.remove_enrollment(link)
+        self.db.commit()
         return {"detail": "Student removed from course"}
 
     def assign_teacher(self, payload: TeacherAssignment) -> dict:
@@ -98,6 +105,7 @@ class CourseService:
             raise HTTPException(status_code=404, detail="Invalid teacher or course")
         course.teacher_id = payload.teacher_id
         self.repo.save(course)
+        self.db.commit()
         return {"detail": "Teacher assigned"}
 
     def get_students(self, course_id: int, current_user: User) -> list:

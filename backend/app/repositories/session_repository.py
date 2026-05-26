@@ -63,12 +63,12 @@ class SessionRepository:
     def create(self, **fields) -> SessionModel:
         session = SessionModel(**fields)
         self.db.add(session)
-        self.db.commit()
+        self.db.flush()
         self.db.refresh(session)
         return session
 
     def save(self, session: SessionModel) -> SessionModel:
-        self.db.commit()
+        self.db.flush()
         self.db.refresh(session)
         return session
 
@@ -78,7 +78,6 @@ class SessionRepository:
             Attendance.session_id == session.id
         ).delete(synchronize_session=False)
         self.db.delete(session)
-        self.db.commit()
 
     def bulk_add_absent(self, session_id: int, student_ids: Set[int]) -> None:
         for student_id in student_ids:

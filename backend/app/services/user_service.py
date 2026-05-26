@@ -46,7 +46,7 @@ class UserService:
             password_hash = get_password_hash("default123")
             password_changed = 0
 
-        return self.repo.create(
+        user = self.repo.create(
             name=payload.name,
             email=payload.email,
             role=payload.role,
@@ -54,6 +54,8 @@ class UserService:
             password_hash=password_hash,
             password_changed=password_changed,
         )
+        self.db.commit()
+        return user
 
     # ── listing ───────────────────────────────────────────────────────────────
 
@@ -127,7 +129,9 @@ class UserService:
             validate_password_strength(payload.password)
             user.password_hash = get_password_hash(payload.password)
 
-        return self.repo.save(user)
+        user = self.repo.save(user)
+        self.db.commit()
+        return user
 
     # ── delete ────────────────────────────────────────────────────────────────
 
@@ -163,6 +167,7 @@ class UserService:
             self.repo.nullify_teacher_courses(user_id)
 
         self.repo.delete(user)
+        self.db.commit()
         return {"detail": "User deleted"}
 
     # ── photo upload ──────────────────────────────────────────────────────────
@@ -175,7 +180,9 @@ class UserService:
         photo_path, embedding = extract_face_embedding(file)
         student.photo_path = photo_path
         student.face_embedding = embedding
-        return self.repo.save(student)
+        student = self.repo.save(student)
+        self.db.commit()
+        return student
 
     def upload_student_photo(self, file: UploadFile, current_user: User) -> User:
         """Student uploads their own photo."""
@@ -191,7 +198,9 @@ class UserService:
         photo_path, embedding = extract_face_embedding(file)
         current_user.photo_path = photo_path
         current_user.face_embedding = embedding
-        return self.repo.save(current_user)
+        current_user = self.repo.save(current_user)
+        self.db.commit()
+        return current_user
 
     # ── password management ───────────────────────────────────────────────────
 
@@ -216,6 +225,7 @@ class UserService:
 
         validate_password_strength(payload.new_password)
         user.password_hash = get_password_hash(payload.new_password)
+        user = self.repo.save(user)
         self.db.commit()
         return {"detail": "Password reset"}
 
@@ -229,7 +239,9 @@ class UserService:
         validate_password_strength(new_password)
         current_user.password_hash = get_password_hash(new_password)
         current_user.password_changed = 1
-        return self.repo.save(current_user)
+        current_user = self.repo.save(current_user)
+        self.db.commit()
+        return current_user
 
     # ── bulk upload ───────────────────────────────────────────────────────────
 
@@ -260,7 +272,8 @@ class UserService:
                 )
 
             created_count = 0
-            errors = []
+            errors: list = []
+            pending: list = []
 
             for index, row in df.iterrows():
                 try:
@@ -331,12 +344,14 @@ class UserService:
                         if pd.notna(group_value):
                             user_data["group"] = str(group_value).strip()
 
-                    self.db.add(User(**user_data))
+                    pending.append(user_data)
                     created_count += 1
 
                 except Exception as exc:
                     errors.append(f"Row {index + 2}: {exc}")
 
+            if pending:
+                self.repo.bulk_add(pending)
             self.db.commit()
 
             return {

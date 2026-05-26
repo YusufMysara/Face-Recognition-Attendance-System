@@ -138,6 +138,7 @@ class AttendanceService:
                 }
             )
 
+        self.db.commit()
         return {"attendance": attendance_responses, "detected_faces": detected_faces}
 
     def mark_crops(
@@ -242,6 +243,7 @@ class AttendanceService:
             int(1000 * (t_end - t_start)),
             int(1000 * (t_end - t_start) / max(len(files), 1)),
         )
+        self.db.commit()
         return {"recognized": results}
 
     # ── attendance management ─────────────────────────────────────────────────
@@ -361,8 +363,8 @@ class AttendanceService:
         elif current_user.role != "admin":
             raise HTTPException(status_code=403, detail="Not authorized")
         record.status = payload.status
-        self.db.commit()
         student_name = self.repo.get_student_name(record.student_id)
+        self.db.commit()
         return self._to_response(record, student_name)
 
     def get_all(self) -> list:
@@ -401,21 +403,9 @@ class AttendanceService:
                 status_code=400, detail="Student not enrolled in this course"
             )
 
-        existing = self.repo.get_record(session_id, student_id)
-        if existing:
-            existing.status = status
-            record = existing
-        else:
-            record = AttendanceModel(
-                session_id=session_id,
-                student_id=student_id,
-                status=status,
-            )
-            self.db.add(record)
-
-        self.db.commit()
-        self.db.refresh(record)
+        record = self.repo.upsert_manual(session_id, student_id, status)
         student_name = self.repo.get_student_name(student_id)
+        self.db.commit()
         return self._to_response(record, student_name)
 
     def get_notifications(self, current_user: User) -> list:

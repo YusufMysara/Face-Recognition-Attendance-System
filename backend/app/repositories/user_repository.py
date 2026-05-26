@@ -37,19 +37,17 @@ class UserRepository:
     def create(self, **fields) -> User:
         user = User(**fields)
         self.db.add(user)
-        self.db.commit()
+        self.db.flush()
         self.db.refresh(user)
         return user
 
     def save(self, user: User) -> User:
-        """Commit pending changes on *user* and return the refreshed instance."""
-        self.db.commit()
+        self.db.flush()
         self.db.refresh(user)
         return user
 
     def delete(self, user: User) -> None:
         self.db.delete(user)
-        self.db.commit()
 
     # ── cascade helpers (called before deleting a user) ───────────────────────
 
@@ -82,6 +80,13 @@ class UserRepository:
         self.db.query(SessionModel).filter(
             SessionModel.teacher_id == teacher_id
         ).delete(synchronize_session=False)
+
+    def bulk_add(self, users_data: list) -> int:
+        """Add multiple User rows in one flush. Returns count added."""
+        for data in users_data:
+            self.db.add(User(**data))
+        self.db.flush()
+        return len(users_data)
 
     def nullify_teacher_courses(self, teacher_id: int) -> None:
         self.db.query(Course).filter(Course.teacher_id == teacher_id).update(

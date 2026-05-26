@@ -72,28 +72,26 @@ class CourseRepository:
     def create(self, **fields) -> Course:
         course = Course(**fields)
         self.db.add(course)
-        self.db.commit()
+        self.db.flush()
         self.db.refresh(course)
         return course
 
     def save(self, course: Course) -> Course:
-        self.db.commit()
+        self.db.flush()
         self.db.refresh(course)
         return course
 
     def delete(self, course: Course) -> None:
         self.db.delete(course)
-        self.db.commit()
 
     def add_enrollment(self, student_id: int, course_id: int) -> StudentCourse:
         link = StudentCourse(student_id=student_id, course_id=course_id)
         self.db.add(link)
-        self.db.commit()
+        self.db.flush()
         return link
 
     def remove_enrollment(self, link: StudentCourse) -> None:
         self.db.delete(link)
-        self.db.commit()
 
     # ── cascade helpers (called before deleting a course) ─────────────────────
 
