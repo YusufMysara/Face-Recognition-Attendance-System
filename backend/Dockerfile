@@ -1,32 +1,24 @@
-# Use official slim Python 3.10 image
 FROM python:3.10-slim
 
-# Install system dependencies needed by dlib / face_recognition
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    cmake \
-    libx11-6 \
+# Runtime libraries required by OpenCV (used by InsightFace).
+# No build-essential or cmake — InsightFace ships pre-built ONNX models.
+RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
-    libglib2.0-dev \
+    libgl1 \
     libsm6 \
     libxrender1 \
     libxext6 \
-    libgl1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
 WORKDIR /app
 
-# Copy requirements first to leverage Docker cache
+# Install dependencies before copying source so this layer is cached.
 COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip \
+ && pip install --no-cache-dir -r requirements.txt
 
-# Upgrade pip and install Python dependencies
-RUN pip install --upgrade pip
-RUN pip install -r requirements.txt
+# Copy application source (see .dockerignore for exclusions).
+COPY . .
 
-# Copy the rest of your application code
-COPY . /app
-
-# Start the FastAPI server
-# Uses Railway's $PORT environment variable, defaults to 8080 if not set
+# Railway injects $PORT; default to 8080 if running locally.
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}"]
