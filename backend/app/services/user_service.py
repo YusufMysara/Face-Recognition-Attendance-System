@@ -59,8 +59,8 @@ class UserService:
 
     # ── listing ───────────────────────────────────────────────────────────────
 
-    def list_users(self) -> List[User]:
-        return self.repo.get_all()
+    def list_users(self, skip: int = 0, limit: int = 100) -> List[User]:
+        return self.repo.get_all(skip=skip, limit=limit)
 
     # ── update ────────────────────────────────────────────────────────────────
 

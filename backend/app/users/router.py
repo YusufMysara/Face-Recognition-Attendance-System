@@ -23,10 +23,12 @@ def create_user(
 
 @router.get("/users", response_model=List[UserResponse])
 def list_users(
+    skip: int = 0,
+    limit: int = 100,
     db: Session = Depends(get_db),
     _: User = Depends(require_role("admin")),
 ):
-    return UserService(db).list_users()
+    return UserService(db).list_users(skip=skip, limit=limit)
 
 
 @router.put("/users/{user_id}", response_model=UserResponse)

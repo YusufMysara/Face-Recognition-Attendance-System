@@ -23,8 +23,8 @@ class UserRepository:
     def get_by_email(self, email: str) -> Optional[User]:
         return self.db.query(User).filter(User.email == email).first()
 
-    def get_all(self) -> List[User]:
-        return self.db.query(User).all()
+    def get_all(self, skip: int = 0, limit: int = 100) -> List[User]:
+        return self.db.query(User).offset(skip).limit(limit).all()
 
     def exists_email(self, email: str, exclude_id: Optional[int] = None) -> bool:
         q = self.db.query(User).filter(User.email == email)

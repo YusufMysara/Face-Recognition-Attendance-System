@@ -1,18 +1,20 @@
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict
+
+AttendanceStatus = Literal["present", "absent", "late", "excused"]
 
 
 class AttendanceBase(BaseModel):
     session_id: int
     student_id: int
-    status: str
+    status: AttendanceStatus
 
 
 class AttendanceEdit(BaseModel):
     attendance_id: int
-    status: str
+    status: AttendanceStatus
 
 
 class AttendanceResponse(AttendanceBase):

@@ -319,7 +319,7 @@ class AttendanceService:
 
         # Compute per-course attendance percentages.
         # Fetch only sessions for courses the student is actually enrolled in
-        # (avoids get_all_sessions + N per-session enrollment queries).
+        # (avoids get_all_sessions + N enrollment queries — single IN query instead).
         enrolled_course_ids = {
             e.course_id
             for e in self.repo.get_enrollments_for_student(student_id)
@@ -371,8 +371,8 @@ class AttendanceService:
         self.db.commit()
         return self._to_response(record, student_name)
 
-    def get_all(self) -> list:
-        rows = self.repo.get_all_with_joins()
+    def get_all(self, skip: int = 0, limit: int = 100) -> list:
+        rows = self.repo.get_all_with_joins(skip=skip, limit=limit)
         return [
             {
                 "id": record.id,

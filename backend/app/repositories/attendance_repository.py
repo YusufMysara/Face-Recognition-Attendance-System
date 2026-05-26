@@ -103,9 +103,6 @@ class AttendanceRepository:
             .all()
         )
 
-    def get_all_sessions(self) -> List[SessionModel]:
-        return self.db.query(SessionModel).all()
-
     def get_sessions_for_courses(self, course_ids: Set[int]) -> List[SessionModel]:
         """All sessions whose course_id is in the given set (single IN query)."""
         if not course_ids:
@@ -175,25 +172,17 @@ class AttendanceRepository:
             .first()
         )
 
-    def get_all_with_joins(self) -> List[Tuple]:
+    def get_all_with_joins(
+        self, skip: int = 0, limit: int = 100
+    ) -> List[Tuple]:
         """Returns (record, student_name, course_name) for admin view."""
         return (
             self.db.query(AttendanceModel, User.name, Course.name)
             .join(User, AttendanceModel.student_id == User.id)
             .join(SessionModel, AttendanceModel.session_id == SessionModel.id)
             .join(Course, SessionModel.course_id == Course.id)
-            .all()
-        )
-
-    def get_submitted_sessions_for_course(
-        self, course_id: int
-    ) -> List[SessionModel]:
-        return (
-            self.db.query(SessionModel)
-            .filter(
-                SessionModel.course_id == course_id,
-                SessionModel.status == "submitted",
-            )
+            .offset(skip)
+            .limit(limit)
             .all()
         )
 

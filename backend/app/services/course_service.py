@@ -53,7 +53,7 @@ class CourseService:
         course = self.repo.get_by_id(course_id)
         if not course:
             raise HTTPException(status_code=404, detail="Course not found")
-        for key, value in payload.dict(exclude_unset=True).items():
+        for key, value in payload.model_dump(exclude_unset=True).items():
             setattr(course, key, value)
         course = self.repo.save(course)
         self.db.commit()

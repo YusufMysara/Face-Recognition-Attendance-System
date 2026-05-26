@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.auth.dependencies import get_current_user, require_role
 from app.database import get_db
 from app.models import User
-from app.schemas.attendance import AttendanceEdit, AttendanceResponse, RetakeRequest
+from app.schemas.attendance import AttendanceEdit, AttendanceResponse, AttendanceStatus, RetakeRequest
 from app.services.attendance_service import AttendanceService
 
 router = APIRouter(prefix="/attendance", tags=["attendance"])
@@ -52,11 +52,13 @@ def retake_attendance(
 
 @router.get("/all")
 def get_all_attendance(
+    skip: int = 0,
+    limit: int = 100,
     current_user: User = Depends(require_role("admin")),
     db: Session = Depends(get_db),
 ):
     """Admin endpoint to get all attendance records with course information."""
-    return AttendanceService(db).get_all()
+    return AttendanceService(db).get_all(skip=skip, limit=limit)
 
 
 @router.get("/notifications")
@@ -81,7 +83,7 @@ def edit_attendance(
 def create_manual_attendance(
     session_id: int = Form(...),
     student_id: int = Form(...),
-    status: str = Form(...),
+    status: AttendanceStatus = Form(...),
     current_user: User = Depends(require_role("teacher")),
     db: Session = Depends(get_db),
 ):
