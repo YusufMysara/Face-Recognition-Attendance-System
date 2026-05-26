@@ -1,7 +1,9 @@
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict
+
+SessionStatus = Literal["open", "closed", "submitted"]
 
 
 class SessionBase(BaseModel):
@@ -17,7 +19,6 @@ class SessionResponse(SessionBase):
     teacher_id: int
     started_at: datetime
     ended_at: Optional[datetime]
-    status: str
+    status: SessionStatus
 
     model_config = ConfigDict(from_attributes=True)
-

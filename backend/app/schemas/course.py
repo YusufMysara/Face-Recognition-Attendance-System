@@ -13,7 +13,8 @@ class CourseCreate(CourseBase):
     pass
 
 
-class CourseUpdate(CourseBase):
+class CourseUpdate(BaseModel):
+    """Partial-patch schema — every field is optional, no inheritance from CourseBase."""
     name: Optional[str] = None
     description: Optional[str] = None
     teacher_id: Optional[int] = None
@@ -33,4 +34,3 @@ class CourseAssignment(BaseModel):
 class TeacherAssignment(BaseModel):
     teacher_id: int
     course_id: int
-
