@@ -318,13 +318,6 @@ class UserService:
                         )
                         continue
 
-                    # Final admin permission check (mirrors original double-check)
-                    if role == "admin" and current_user.email != _SUPER_ADMIN_EMAIL:
-                        errors.append(
-                            f"Row {index + 2}: Only Super Admin can create admin users"
-                        )
-                        continue
-
                     user_data: dict = {
                         "name": name,
                         "email": email,

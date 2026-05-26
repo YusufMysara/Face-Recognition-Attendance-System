@@ -17,8 +17,7 @@ class CourseService:
     # ── helpers ───────────────────────────────────────────────────────────────
 
     def _get_user_by_role(self, user_id: int, role: str) -> User:
-        user = self.db.query(User).filter(User.id == user_id, User.role == role).first()
-        return user
+        return self.repo.get_user_by_role(user_id, role)
 
     # ── CRUD ──────────────────────────────────────────────────────────────────
 

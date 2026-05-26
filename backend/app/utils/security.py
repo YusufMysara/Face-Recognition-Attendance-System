@@ -58,8 +58,8 @@ def validate_password_strength(password: str) -> None:
     - At least one digit
     - At least one special character
     """
-    if len(password) < 6:
-        raise HTTPException(status_code=400, detail="Password must be at least 6 characters long")
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters long")
 
     if not re.search(r'[A-Z]', password):
         raise HTTPException(status_code=400, detail="Password must contain at least one uppercase letter")

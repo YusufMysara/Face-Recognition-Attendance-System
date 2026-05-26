@@ -43,6 +43,14 @@ class CourseRepository:
             .first()
         )
 
+    def get_user_by_role(self, user_id: int, role: str) -> Optional[User]:
+        """Look up a single user by id and role (e.g. confirm a teacher exists)."""
+        return (
+            self.db.query(User)
+            .filter(User.id == user_id, User.role == role)
+            .first()
+        )
+
     def get_students(self, course_id: int) -> List[User]:
         return (
             self.db.query(User)

@@ -11,7 +11,6 @@ class Session {
   final SessionStatus status;
   final DateTime? startedAt;
   final DateTime? endedAt;
-  final DateTime? createdAt;
   final String? sessionName;
   final String? courseName;
 
@@ -25,7 +24,6 @@ class Session {
     required this.status,
     this.startedAt,
     this.endedAt,
-    this.createdAt,
     this.sessionName,
     this.courseName,
     this.attendanceStatus,
@@ -42,7 +40,6 @@ class Session {
       status: _parseStatus(json['status'] as String),
       startedAt: json['started_at'] != null ? DateTime.parse(json['started_at']) : null,
       endedAt: json['ended_at'] != null ? DateTime.parse(json['ended_at']) : null,
-      createdAt: json['created_at'] != null ? DateTime.parse(json['created_at']) : null,
       sessionName: json['session_name'] as String?,
       courseName: json['course_name'] as String?,
     );
@@ -69,7 +66,6 @@ class Session {
       'status': status.toString().split('.').last,
       'started_at': startedAt?.toIso8601String(),
       'ended_at': endedAt?.toIso8601String(),
-      'created_at': createdAt?.toIso8601String(),
       'session_name': sessionName,
       'course_name': courseName,
     };
