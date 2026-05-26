@@ -1,13 +1,14 @@
 FROM python:3.10-slim
 
 # Runtime libraries required by OpenCV (used by InsightFace).
-# No build-essential or cmake — InsightFace ships pre-built ONNX models.
+# curl is added for the docker-compose health check.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     libgl1 \
     libsm6 \
     libxrender1 \
     libxext6 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -20,5 +21,9 @@ RUN pip install --no-cache-dir --upgrade pip \
 # Copy application source (see .dockerignore for exclusions).
 COPY . .
 
-# Railway injects $PORT; default to 8080 if running locally.
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}"]
+# Make the entrypoint executable.
+RUN chmod +x docker-entrypoint.sh
+
+# The entrypoint creates required dirs, initialises the DB, seeds the
+# super-admin, then execs uvicorn.
+ENTRYPOINT ["./docker-entrypoint.sh"]

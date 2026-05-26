@@ -5,21 +5,28 @@ services:
     build:
       context: ./backend
     environment:
-      # Override JWT_SECRET via a root-level .env file or shell export.
-      # Never commit a real secret — this default is for local dev only.
-      JWT_SECRET: ${JWT_SECRET:-changeme-replace-with-a-strong-secret}
+      # Change this before deploying to production.
+      JWT_SECRET: dev-secret-change-in-production-32chars
       # SQLite stored in a named volume so data survives container restarts.
       DATABASE_URL: sqlite:////app/db/face_recognition_attendance.db
       # Uploaded face photos stored in a separate named volume.
       UPLOAD_DIR: /app/uploads
-      # Allow requests from the frontend nginx container.
+      # Allow requests only from the nginx frontend container.
       CORS_ALLOWED_ORIGINS: http://localhost
       PORT: "8000"
     volumes:
       - db_data:/app/db
       - uploads:/app/uploads
     restart: unless-stopped
-    # Uncomment to expose the API directly on the host (useful for debugging):
+    healthcheck:
+      # /ready returns 200 as soon as uvicorn is up (InsightFace warms up in
+      # the background — the frontend's login/dashboard work immediately).
+      test: ["CMD", "curl", "-f", "http://localhost:8000/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    # Uncomment to expose the API directly on the host for debugging:
     # ports:
     #   - "8000:8000"
 
@@ -29,12 +36,12 @@ services:
       context: ./frontend
       args:
         # Empty string → relative URLs → nginx proxies them to the backend.
-        # Set to a full URL here or via --build-arg for other deploy targets.
         VITE_API_BASE_URL: ""
     ports:
       - "80:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     restart: unless-stopped
 
 # ── Named volumes ─────────────────────────────────────────────────────────────
