@@ -3,6 +3,7 @@ import logging
 import os
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -147,9 +148,20 @@ def extract_face_embedding(file: UploadFile) -> tuple[str, str]:
     Save the uploaded photo, detect the largest face with InsightFace,
     and return (saved_path, json_embedding_string).
     Embedding is a 512-dim ArcFace vector (L2-normalised).
+
+    Security: the original filename is NEVER used on disk.  A UUID is generated
+    for every upload so path-traversal attacks (e.g. filename='../../app/main.py')
+    cannot overwrite application files.
     """
     upload_dir = ensure_upload_dir()
-    file_path = upload_dir / file.filename
+
+    # Keep only the file extension (e.g. ".jpg") from the original name;
+    # discard the rest entirely.  Fall back to ".jpg" for unknown extensions.
+    _ALLOWED_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+    raw_suffix = Path(file.filename or "").suffix.lower()
+    suffix = raw_suffix if raw_suffix in _ALLOWED_EXTS else ".jpg"
+    file_path = upload_dir / f"{uuid.uuid4().hex}{suffix}"
+
     content = file.file.read()
     with open(file_path, "wb") as buf:
         buf.write(content)

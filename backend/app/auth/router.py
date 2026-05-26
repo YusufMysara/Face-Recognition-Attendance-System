@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.limiter import limiter
 from app.repositories.user_repository import UserRepository
 from app.schemas.auth import LoginRequest, LoginResponse, Token, UserInfo
 from app.utils.security import create_access_token, verify_and_update_password
@@ -10,7 +11,8 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/login", response_model=LoginResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)):
+@limiter.limit("10/minute")
+def login(request: Request, payload: LoginRequest, db: Session = Depends(get_db)):
     user = UserRepository(db).get_by_email(payload.email)
     if not user:
         raise HTTPException(status_code=400, detail="Invalid credentials")

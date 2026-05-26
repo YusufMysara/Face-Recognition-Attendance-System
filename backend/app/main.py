@@ -3,12 +3,15 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from app.auth import router as auth_router
 from app.attendance import router as attendance_router
 from app.config import get_settings
 from app.courses import router as courses_router
 from app.database import Base, engine
+from app.limiter import limiter
 from app.sessions import router as sessions_router
 from app.users import router as admin_router
 
@@ -83,6 +86,10 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Face Recognition Attendance API", lifespan=lifespan)
+
+# Rate-limiting state and 429 handler
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,

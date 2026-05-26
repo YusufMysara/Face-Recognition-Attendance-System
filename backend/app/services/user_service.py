@@ -10,14 +10,16 @@ from typing import List
 from fastapi import HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.models import User
 from app.repositories.user_repository import UserRepository
 from app.schemas.user import PasswordResetRequest, UserCreate, UserUpdate
 from app.utils.face import extract_face_embedding
 from app.utils.security import get_password_hash, validate_password_strength, verify_password
 
-_SUPER_ADMIN_EMAIL = "admin@example.com"
-_SUPER_ADMIN_NAME = "Super Admin"
+_settings = get_settings()
+_SUPER_ADMIN_EMAIL = _settings.super_admin_email
+_SUPER_ADMIN_NAME = _settings.super_admin_name
 
 
 class UserService:
