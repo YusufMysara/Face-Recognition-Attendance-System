@@ -1,11 +1,12 @@
-import os
 from functools import lru_cache
 
 from pydantic import Field
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", populate_by_name=True)
+
     app_name: str = Field(default="Face Recognition Attendance API")
     secret_key: str = Field(alias="JWT_SECRET")
     algorithm: str = "HS256"
@@ -16,9 +17,6 @@ class Settings(BaseSettings):
     # Super-admin identity — override via SUPER_ADMIN_EMAIL env var if needed
     super_admin_email: str = Field(default="admin@example.com", alias="SUPER_ADMIN_EMAIL")
     super_admin_name: str = Field(default="Super Admin", alias="SUPER_ADMIN_NAME")
-
-    class Config:
-        env_file = ".env"
 
 
 @lru_cache
