@@ -48,25 +48,13 @@ class AttendanceService:
         if session.teacher_id != teacher_id:
             raise HTTPException(status_code=403, detail="Not your session")
 
-    def _build_known(
-        self, students: List[User]
-    ) -> Tuple[List[User], Optional[np.ndarray]]:
-        """Parse and normalise enrolled students' ArcFace embeddings.
+    def _build_known(self, students: List[User]) -> List[Tuple[User, np.ndarray]]:
+        """Build a list of (student, unit-normalised ArcFace embedding) pairs.
 
-        Returns:
-            roster   – ordered list of Student ORM objects with valid embeddings.
-            matrix   – float32 array of shape (N, 512), one row per student,
-                       each row already L2-normalised. None when roster is empty.
-
-        Filters out students who have no embedding or whose stored vector is not
-        512-dimensional (left over from the old 128-dim dlib pipeline).
-
-        Building the matrix once per request and reusing it across all crops in
-        that request lets NumPy do a single BLAS matrix-vector multiply per crop
-        instead of N separate dot() calls in a Python loop.
+        Filters out students who have no embedding or whose embedding is not the
+        expected 512-dimensional ArcFace shape (old dlib 128-dim embeddings).
         """
-        roster: List[User] = []
-        vectors: List[np.ndarray] = []
+        known: List[Tuple[User, np.ndarray]] = []
         for student in students:
             if not student.face_embedding:
                 continue
@@ -76,28 +64,20 @@ class AttendanceService:
             norm = np.linalg.norm(emb)
             if norm > 0:
                 emb = emb / norm
-            roster.append(student)
-            vectors.append(emb)
-
-        if not roster:
-            return roster, None
-        return roster, np.stack(vectors)   # shape (N, 512)
+            known.append((student, emb))
+        return known
 
     def _best_match(
-        self,
-        embedding: np.ndarray,
-        roster: List[User],
-        matrix: np.ndarray,
+        self, embedding: np.ndarray, known: List[Tuple[User, np.ndarray]]
     ) -> Tuple[Optional[User], float]:
-        """Return the best-matching student and their cosine similarity score.
-
-        Uses a single matrix-vector multiply (one BLAS call) instead of N
-        individual dot() calls in a Python loop. For unit vectors, the dot
-        product equals cosine similarity, so no extra normalisation is needed.
-        """
-        scores = matrix @ embedding          # shape (N,) — one BLAS call
-        best_idx = int(np.argmax(scores))
-        return roster[best_idx], float(scores[best_idx])
+        best_student: Optional[User] = None
+        best_score = 0.0
+        for student, known_emb in known:
+            score = float(np.dot(embedding, known_emb))
+            if score > best_score:
+                best_score = score
+                best_student = student
+        return best_student, best_score
 
     # ── face recognition endpoints ────────────────────────────────────────────
 
@@ -111,8 +91,8 @@ class AttendanceService:
         self._require_owner(session, current_user.id)
 
         students = self.repo.get_course_students(session.course_id)
-        roster, matrix = self._build_known(students)
-        if matrix is None:
+        known = self._build_known(students)
+        if not known:
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -137,7 +117,7 @@ class AttendanceService:
             if norm > 0:
                 embedding = embedding / norm
 
-            best_student, best_score = self._best_match(embedding, roster, matrix)
+            best_student, best_score = self._best_match(embedding, known)
             matched_id: Optional[int] = None
             matched_name: Optional[str] = None
 
@@ -170,8 +150,8 @@ class AttendanceService:
         self._require_owner(session, current_user.id)
 
         students = self.repo.get_course_students(session.course_id)
-        roster, matrix = self._build_known(students)
-        if matrix is None:
+        known = self._build_known(students)
+        if not known:
             raise HTTPException(
                 status_code=400, detail="No valid face embeddings registered."
             )
@@ -225,7 +205,7 @@ class AttendanceService:
             if norm > 0:
                 embedding = embedding / norm
 
-            best_student, best_score = self._best_match(embedding, roster, matrix)
+            best_student, best_score = self._best_match(embedding, known)
             logger.info(
                 "[recognition] crop %d: best_match=%s score=%.3f threshold=%.2f → %s",
                 idx,
