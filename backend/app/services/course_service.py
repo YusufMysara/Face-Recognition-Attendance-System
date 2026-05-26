@@ -26,7 +26,7 @@ class CourseService:
             teacher = self._get_user_by_role(payload.teacher_id, "teacher")
             if not teacher:
                 raise HTTPException(status_code=404, detail="Teacher not found")
-        course = self.repo.create(**payload.dict())
+        course = self.repo.create(**payload.model_dump())
         self.db.commit()
         return course
 

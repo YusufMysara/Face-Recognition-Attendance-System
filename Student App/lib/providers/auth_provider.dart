@@ -1,6 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/auth_service.dart';
-import '../models/user.dart';
 
 final authServiceProvider = Provider<AuthService>((ref) => AuthService());
 
@@ -12,27 +11,19 @@ final authStateProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
 class AuthState {
   final bool isLoading;
   final bool isAuthenticated;
-  final User? user;
-  final String? error;
 
   AuthState({
     this.isLoading = false,
     this.isAuthenticated = false,
-    this.user,
-    this.error,
   });
 
   AuthState copyWith({
     bool? isLoading,
     bool? isAuthenticated,
-    User? user,
-    String? error,
   }) {
     return AuthState(
       isLoading: isLoading ?? this.isLoading,
       isAuthenticated: isAuthenticated ?? this.isAuthenticated,
-      user: user ?? this.user,
-      error: error,
     );
   }
 }
@@ -44,7 +35,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   Future<void> checkAuthStatus() async {
     state = state.copyWith(isLoading: true);
-    
+
     try {
       final isAuthenticated = await _authService.isAuthenticated();
       state = state.copyWith(
@@ -52,50 +43,32 @@ class AuthNotifier extends StateNotifier<AuthState> {
         isAuthenticated: isAuthenticated,
       );
     } catch (e) {
-      state = state.copyWith(
-        isLoading: false,
-        isAuthenticated: false,
-        error: e.toString(),
-      );
+      state = state.copyWith(isLoading: false, isAuthenticated: false);
     }
   }
 
-  Future<bool> login(String email, String password) async {
-    state = state.copyWith(isLoading: true, error: null);
-    
+  /// Attempts login. Returns normally on success; rethrows on failure so the
+  /// UI can display a specific error message without storing it in global state.
+  Future<void> login(String email, String password) async {
+    state = state.copyWith(isLoading: true);
+
     try {
-      final response = await _authService.login(email, password);
-      state = state.copyWith(
-        isLoading: false,
-        isAuthenticated: true,
-        user: response.user,
-      );
-      return true;
+      await _authService.login(email, password);
+      state = state.copyWith(isLoading: false, isAuthenticated: true);
     } catch (e) {
-      state = state.copyWith(
-        isLoading: false,
-        isAuthenticated: false,
-        error: e.toString(),
-      );
-      return false;
+      state = state.copyWith(isLoading: false, isAuthenticated: false);
+      rethrow;
     }
   }
 
   Future<void> logout() async {
     state = state.copyWith(isLoading: true);
-    
+
     try {
       await _authService.logout();
       state = AuthState();
     } catch (e) {
-      state = state.copyWith(
-        isLoading: false,
-        error: e.toString(),
-      );
+      state = state.copyWith(isLoading: false);
     }
-  }
-
-  void clearError() {
-    state = state.copyWith(error: null);
   }
 }

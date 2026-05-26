@@ -4,7 +4,8 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.limiter import limiter
 from app.repositories.user_repository import UserRepository
-from app.schemas.auth import LoginRequest, LoginResponse, Token, UserInfo
+from app.schemas.auth import LoginRequest, LoginResponse, Token
+from app.schemas.user import UserResponse
 from app.utils.security import create_access_token, verify_and_update_password
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -28,4 +29,7 @@ def login(request: Request, payload: LoginRequest, db: Session = Depends(get_db)
         db.commit()
 
     token = create_access_token({"sub": user.id, "role": user.role})
-    return LoginResponse(user=UserInfo.from_orm(user), token=Token(access_token=token))
+    return LoginResponse(
+        user=UserResponse.model_validate(user),
+        token=Token(access_token=token),
+    )

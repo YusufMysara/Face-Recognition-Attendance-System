@@ -14,11 +14,11 @@ class UserCreate(UserBase):
     password: Optional[str] = None
 
 
-class UserUpdate(BaseModel):
+class UserUpdate(UserBase):
     name: Optional[str] = None
     email: Optional[EmailStr] = None
-    group: Optional[str] = None
     role: Optional[str] = None
+    group: Optional[str] = None
     password: Optional[str] = None
 
 

@@ -172,12 +172,11 @@ class TestGetNotifications:
         # Set .name as an attribute explicitly so course.name returns the string.
         course = MagicMock(id=course_id)
         course.name = f"Course {course_id}"
-        sessions = [MagicMock(id=i) for i in range(total_sessions)]
 
         svc.repo.get_enrollments_for_student.return_value = [enrollment]
-        svc.repo.get_course_by_id.return_value = course
-        svc.repo.get_submitted_sessions_for_course.return_value = sessions
-        svc.repo.count_present.return_value = present_count
+        svc.repo.get_courses_by_ids.return_value = [course]
+        svc.repo.count_submitted_sessions_per_course.return_value = {course_id: total_sessions}
+        svc.repo.count_present_per_course.return_value = {course_id: present_count}
 
     def test_below_75_percent_returns_notification(self):
         svc = _make_service()
@@ -202,9 +201,13 @@ class TestGetNotifications:
     def test_course_with_no_submitted_sessions_is_skipped(self):
         svc = _make_service()
         enrollment = MagicMock(course_id=10)
+        course = MagicMock(id=10)
+        course.name = "Course 10"
+
         svc.repo.get_enrollments_for_student.return_value = [enrollment]
-        svc.repo.get_course_by_id.return_value = MagicMock(id=10)
-        svc.repo.get_submitted_sessions_for_course.return_value = []  # no sessions yet
+        svc.repo.get_courses_by_ids.return_value = [course]
+        svc.repo.count_submitted_sessions_per_course.return_value = {10: 0}
+        svc.repo.count_present_per_course.return_value = {}
 
         result = svc.get_notifications(_student(id=10))
 
@@ -220,21 +223,11 @@ class TestGetNotifications:
         course_b.name = "Science"
 
         svc.repo.get_enrollments_for_student.return_value = [enroll_a, enroll_b]
-
-        def _course(cid):
-            return course_a if cid == 1 else course_b
-
-        def _sessions(cid):
-            return [MagicMock(id=i) for i in range(4)]   # 4 sessions each
-
-        def _present(student_id, session_ids):
-            # Math: 1/4 = 25 % (failing); Science: 4/4 = 100 % (passing)
-            return 1 if len(session_ids) == 4 and student_id == 10 and \
-                        svc.repo.get_course_by_id.call_args.args[0] == 1 else 4
-
-        svc.repo.get_course_by_id.side_effect = _course
-        svc.repo.get_submitted_sessions_for_course.side_effect = _sessions
-        svc.repo.count_present.side_effect = _present
+        svc.repo.get_courses_by_ids.return_value = [course_a, course_b]
+        # Math: 4 sessions, 1 present (25 %) → warning
+        # Science: 4 sessions, 4 present (100 %) → no warning
+        svc.repo.count_submitted_sessions_per_course.return_value = {1: 4, 2: 4}
+        svc.repo.count_present_per_course.return_value = {1: 1, 2: 4}
 
         result = svc.get_notifications(_student(id=10))
 

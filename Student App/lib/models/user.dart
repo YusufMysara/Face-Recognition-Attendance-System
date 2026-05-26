@@ -28,23 +28,15 @@ class User {
       passwordChanged: json['password_changed'] as bool? ?? false,
     );
   }
-
 }
 
 class Token {
   final String accessToken;
-  final String tokenType;
 
-  Token({
-    required this.accessToken,
-    required this.tokenType,
-  });
+  Token({required this.accessToken});
 
   factory Token.fromJson(Map<String, dynamic> json) {
-    return Token(
-      accessToken: json['access_token'] as String,
-      tokenType: json['token_type'] as String,
-    );
+    return Token(accessToken: json['access_token'] as String);
   }
 }
 
@@ -52,10 +44,7 @@ class AuthResponse {
   final User user;
   final Token token;
 
-  AuthResponse({
-    required this.user,
-    required this.token,
-  });
+  AuthResponse({required this.user, required this.token});
 
   factory AuthResponse.fromJson(Map<String, dynamic> json) {
     return AuthResponse(

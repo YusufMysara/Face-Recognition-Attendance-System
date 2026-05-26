@@ -13,7 +13,7 @@ class CourseCreate(CourseBase):
     pass
 
 
-class CourseUpdate(BaseModel):
+class CourseUpdate(CourseBase):
     name: Optional[str] = None
     description: Optional[str] = None
     teacher_id: Optional[int] = None

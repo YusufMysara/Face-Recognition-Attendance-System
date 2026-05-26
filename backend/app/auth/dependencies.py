@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import User
+from app.repositories.user_repository import UserRepository
 from app.utils.security import decode_token
 
 logger = logging.getLogger(__name__)
@@ -37,7 +38,7 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         logger.warning("JWT decode failed: %s", exc)
         raise credentials_exception
 
-    user = db.query(User).filter(User.id == user_id).first()
+    user = UserRepository(db).get_by_id(user_id)
     if user is None:
         logger.warning("User %s from token not found", user_id)
         raise credentials_exception

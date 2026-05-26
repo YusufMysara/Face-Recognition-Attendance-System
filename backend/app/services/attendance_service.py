@@ -317,19 +317,23 @@ class AttendanceService:
 
         records = [r for r, *_ in rows]
 
-        # Compute per-course attendance percentages
+        # Compute per-course attendance percentages.
+        # Fetch only sessions for courses the student is actually enrolled in
+        # (avoids get_all_sessions + N per-session enrollment queries).
+        enrolled_course_ids = {
+            e.course_id
+            for e in self.repo.get_enrollments_for_student(student_id)
+        }
+        sessions_for_courses = self.repo.get_sessions_for_courses(enrolled_course_ids)
+        records_by_session: Dict[int, Any] = {rec.session_id: rec for rec in records}
+
         course_totals: Dict[int, Dict[str, int]] = defaultdict(
             lambda: {"present": 0, "total": 0}
         )
-        for session in self.repo.get_all_sessions():
-            enrollment = self.repo.get_enrollment(session.course_id, student_id)
-            if not enrollment:
-                continue
+        for session in sessions_for_courses:
             course_totals[session.course_id]["total"] += 1
-            attendance_record = next(
-                (rec for rec in records if rec.session_id == session.id), None
-            )
-            if attendance_record and attendance_record.status == "present":
+            rec = records_by_session.get(session.id)
+            if rec and rec.status == "present":
                 course_totals[session.course_id]["present"] += 1
 
         percentages = [
@@ -409,22 +413,36 @@ class AttendanceService:
         return self._to_response(record, student_name)
 
     def get_notifications(self, current_user: User) -> list:
-        """Low-attendance warnings for the logged-in student (< 75 %)."""
+        """Low-attendance warnings for the logged-in student (< 75 %).
+
+        Uses 4 queries regardless of the number of enrolled courses, replacing
+        the previous 3N+1 pattern (one course fetch + one session fetch + one
+        present-count per enrolled course).
+        """
         enrollments = self.repo.get_enrollments_for_student(current_user.id)
+        if not enrollments:
+            return []
+
+        course_ids = [e.course_id for e in enrollments]
+
+        courses = {
+            c.id: c for c in self.repo.get_courses_by_ids(course_ids)
+        }
+        total_per_course = self.repo.count_submitted_sessions_per_course(course_ids)
+        present_per_course = self.repo.count_present_per_course(
+            current_user.id, course_ids
+        )
+
         notifications = []
-        for enrollment in enrollments:
-            course = self.repo.get_course_by_id(enrollment.course_id)
+        for course_id in course_ids:
+            course = courses.get(course_id)
             if not course:
                 continue
-            submitted = self.repo.get_submitted_sessions_for_course(
-                enrollment.course_id
-            )
-            total = len(submitted)
+            total = total_per_course.get(course_id, 0)
             if total == 0:
                 continue
-            session_ids = [s.id for s in submitted]
-            present_count = self.repo.count_present(current_user.id, session_ids)
-            percentage = round((present_count / total) * 100, 1)
+            present = present_per_course.get(course_id, 0)
+            percentage = round((present / total) * 100, 1)
             if percentage < 75.0:
                 notifications.append(
                     {

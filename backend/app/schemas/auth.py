@@ -1,7 +1,6 @@
-from datetime import datetime
-from typing import Optional
+from pydantic import BaseModel, EmailStr
 
-from pydantic import BaseModel, ConfigDict, EmailStr
+from app.schemas.user import UserResponse
 
 
 class Token(BaseModel):
@@ -14,19 +13,6 @@ class LoginRequest(BaseModel):
     password: str
 
 
-class UserInfo(BaseModel):
-    id: int
-    name: str
-    email: EmailStr
-    role: str
-    group: Optional[str] = None
-    photo_path: Optional[str] = None
-    password_changed: bool = False
-
-    model_config = ConfigDict(from_attributes=True)
-
-
 class LoginResponse(BaseModel):
-    user: UserInfo
+    user: UserResponse
     token: Token
-

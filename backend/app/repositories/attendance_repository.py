@@ -1,6 +1,7 @@
 """Pure data-access for the Attendance domain."""
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -104,6 +105,63 @@ class AttendanceRepository:
 
     def get_all_sessions(self) -> List[SessionModel]:
         return self.db.query(SessionModel).all()
+
+    def get_sessions_for_courses(self, course_ids: Set[int]) -> List[SessionModel]:
+        """All sessions whose course_id is in the given set (single IN query)."""
+        if not course_ids:
+            return []
+        return (
+            self.db.query(SessionModel)
+            .filter(SessionModel.course_id.in_(course_ids))
+            .all()
+        )
+
+    def get_courses_by_ids(self, course_ids: List[int]) -> List[Course]:
+        """Batch-fetch courses by a list of IDs (single IN query)."""
+        if not course_ids:
+            return []
+        return (
+            self.db.query(Course)
+            .filter(Course.id.in_(course_ids))
+            .all()
+        )
+
+    def count_submitted_sessions_per_course(
+        self, course_ids: List[int]
+    ) -> Dict[int, int]:
+        """Returns {course_id: submitted_session_count} for all given courses."""
+        if not course_ids:
+            return {}
+        rows = (
+            self.db.query(SessionModel.course_id, func.count(SessionModel.id))
+            .filter(
+                SessionModel.course_id.in_(course_ids),
+                SessionModel.status == "submitted",
+            )
+            .group_by(SessionModel.course_id)
+            .all()
+        )
+        return {course_id: count for course_id, count in rows}
+
+    def count_present_per_course(
+        self, student_id: int, course_ids: List[int]
+    ) -> Dict[int, int]:
+        """Returns {course_id: present_count} across submitted sessions (single query)."""
+        if not course_ids:
+            return {}
+        rows = (
+            self.db.query(SessionModel.course_id, func.count(AttendanceModel.id))
+            .join(AttendanceModel, AttendanceModel.session_id == SessionModel.id)
+            .filter(
+                AttendanceModel.student_id == student_id,
+                AttendanceModel.status == "present",
+                SessionModel.course_id.in_(course_ids),
+                SessionModel.status == "submitted",
+            )
+            .group_by(SessionModel.course_id)
+            .all()
+        )
+        return {course_id: count for course_id, count in rows}
 
     def get_enrollment(
         self, course_id: int, student_id: int

@@ -3,8 +3,6 @@ class Course {
   final String name;
   final String? description;
   final int? teacherId;
-  final DateTime? createdAt;
-  final DateTime? updatedAt;
   final String? schedule;
 
   // These will be computed from attendance data
@@ -17,8 +15,6 @@ class Course {
     required this.name,
     this.description,
     this.teacherId,
-    this.createdAt,
-    this.updatedAt,
     this.schedule,
   });
 
@@ -35,10 +31,7 @@ class Course {
       name: json['name'] as String,
       description: json['description'] as String?,
       teacherId: json['teacher_id'] as int?,
-      createdAt: json['created_at'] != null ? DateTime.parse(json['created_at']) : null,
-      updatedAt: json['updated_at'] != null ? DateTime.parse(json['updated_at']) : null,
       schedule: json['schedule'] as String?,
     );
   }
-
 }
