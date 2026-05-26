@@ -41,15 +41,4 @@ class Course {
     );
   }
 
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'name': name,
-      'description': description,
-      'teacher_id': teacherId,
-      'created_at': createdAt?.toIso8601String(),
-      'updated_at': updatedAt?.toIso8601String(),
-      'schedule': schedule,
-    };
-  }
 }

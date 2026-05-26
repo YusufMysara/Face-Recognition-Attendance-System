@@ -90,20 +90,6 @@ class AttendanceService {
     }
   }
 
-  /// Get attendance for a specific date range
-  Future<List<Session>> getAttendanceByDateRange(
-    DateTime startDate,
-    DateTime endDate,
-  ) async {
-    final allSessions = await getAttendanceHistory();
-
-    return allSessions.where((session) {
-      return session.dateTime != null &&
-             session.dateTime!.isAfter(startDate) &&
-             session.dateTime!.isBefore(endDate);
-    }).toList();
-  }
-
   /// Get low-attendance warnings for the logged-in student.
   /// Returns a list of courses where attendance has dropped below 75%.
   Future<List<AttendanceNotification>> getNotifications() async {

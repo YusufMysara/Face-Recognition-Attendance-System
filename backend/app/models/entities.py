@@ -1,6 +1,4 @@
 from datetime import datetime
-from typing import Optional
-
 from sqlalchemy import (
     Column,
     DateTime,
@@ -90,8 +88,4 @@ class Attendance(Base):
 
     session = relationship("Session", back_populates="attendance_records")
     student = relationship("User")
-
-    @property
-    def student_name(self) -> Optional[str]:
-        return self.student.name if self.student else None
 

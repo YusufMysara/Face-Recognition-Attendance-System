@@ -75,20 +75,6 @@ class AuthService {
     return await _secureStorage.read(key: _accessTokenKey);
   }
 
-  /// Get stored refresh token
-  Future<String?> getRefreshToken() async {
-    return await _secureStorage.read(key: _refreshTokenKey);
-  }
-
-  /// Refresh the access token.
-  ///
-  /// The backend issues 12-hour JWTs and has no refresh-token endpoint.
-  /// When a token expires the user must log in again — return null so callers
-  /// know to redirect to the login screen instead of retrying with a bad token.
-  Future<String?> refreshAccessToken() async {
-    return null;
-  }
-
   /// Save tokens securely
   Future<void> _saveTokens(String accessToken, String refreshToken) async {
     await _secureStorage.write(key: _accessTokenKey, value: accessToken);

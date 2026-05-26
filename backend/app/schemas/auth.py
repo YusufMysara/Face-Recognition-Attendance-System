@@ -9,12 +9,6 @@ class Token(BaseModel):
     token_type: str = "bearer"
 
 
-class TokenPayload(BaseModel):
-    sub: int
-    role: str
-    exp: int
-
-
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str

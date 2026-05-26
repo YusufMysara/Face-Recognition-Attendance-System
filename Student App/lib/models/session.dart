@@ -58,18 +58,6 @@ class Session {
     }
   }
 
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'course_id': courseId,
-      'teacher_id': teacherId,
-      'status': status.toString().split('.').last,
-      'started_at': startedAt?.toIso8601String(),
-      'ended_at': endedAt?.toIso8601String(),
-      'session_name': sessionName,
-      'course_name': courseName,
-    };
-  }
 }
 
 enum AttendanceStatus {

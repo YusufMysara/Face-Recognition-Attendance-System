@@ -29,17 +29,6 @@ class User {
     );
   }
 
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'email': email,
-      'name': name,
-      'role': role,
-      'group': group,
-      'photo_path': photoPath,
-      'password_changed': passwordChanged,
-    };
-  }
 }
 
 class Token {
