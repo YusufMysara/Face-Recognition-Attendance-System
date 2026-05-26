@@ -1,7 +1,6 @@
 fastapi==0.110.0
 uvicorn==0.27.1
 SQLAlchemy==2.0.25
-alembic==1.13.1
 python-multipart==0.0.6
 python-jose==3.3.0
 passlib[bcrypt]==1.7.4
@@ -11,11 +10,9 @@ insightface>=1.0.0
 onnxruntime>=1.17.0
 opencv-python-headless>=4.9.0
 numpy==1.26.4
-Pillow==10.2.0
 pydantic-settings==2.2.1
 email-validator==2.1.0.post1
 pandas==2.1.4
 openpyxl==3.1.2
 slowapi==0.1.9
 pytest==8.1.1
-pytest-mock==3.14.0
