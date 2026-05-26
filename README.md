@@ -1,104 +1,149 @@
 # Attendify
 
-**Face-recognition attendance system for universities** — admins manage users and courses, teachers run live sessions with camera-based check-in, and students track attendance on web and mobile.
-
-| | |
-|---|---|
-| **Backend** | Python · FastAPI · SQLAlchemy · SQLite · JWT · `face_recognition` |
-| **Web** | React · TypeScript · Vite · TanStack Query |
-| **Mobile** | Flutter (student app) |
+A face-recognition attendance system for universities. Admins manage users and courses, teachers run live attendance sessions using the camera, and students monitor their attendance on web and mobile.
 
 ---
 
-## Live demo (Railway)
+## Tech Stack
 
-> **Free tier cold start:** Railway sleeps idle services. The **first request can take ~30–60 seconds** while the container wakes.  
-> **Recommended order:** open the **backend** first, wait until it responds, **then** open the **frontend** so API calls do not time out against a sleeping API.
+| Layer | Technologies |
+|---|---|
+| **Backend** | Python, FastAPI, SQLAlchemy, SQLite, InsightFace (SCRFD + ArcFace), JWT |
+| **Web frontend** | React, TypeScript, Vite, shadcn/ui |
+| **Mobile** | Flutter |
+
+---
+
+## Live Demo (Railway)
+
+> **Note:** Railway free tier sleeps idle services. The first request may take **30–60 seconds** while the container wakes up. Open the backend first, wait until it responds, then open the frontend.
 
 | | URL |
 |---|---|
-| **API (backend)** | [https://face-recognition-attendance-system-production-0ed1.up.railway.app] |
-| **Interactive API docs** | [https://face-recognition-attendance-system-production-0ed1.up.railway.app/docs] |
-| **Web app (frontend)** | [https://face-recognition-attendance-system.up.railway.app/] |
+| **Backend API** | https://face-recognition-attendance-system-production-0ed1.up.railway.app |
+| **API Docs (Swagger)** | https://face-recognition-attendance-system-production-0ed1.up.railway.app/docs |
+| **Web App** | https://face-recognition-attendance-system.up.railway.app/ |
 
-**Quick wake-up:** visit the backend root or `/docs` until the page loads, then use the frontend.
+**Demo credentials**
 
-**Demo login**
+| Role | Email | Password |
+|---|---|---|
+| Admin | `admin@example.com` | `Admin123!` |
 
-- Admin: `admin@example.com` / `Admin123!`  
-
----
-
-## What this project demonstrates
-
-- **Full-stack delivery:** REST API, SPA, and optional mobile client against the same API.
-- **Auth & authorization:** JWT bearer tokens, bcrypt passwords, role-based access (admin, teacher, student).
-- **Domain modeling:** courses, enrollments, sessions, attendance lifecycle (open → closed → submitted).
-- **Face recognition pipeline:** store face embeddings on enrollment; match live camera frames to enrolled students during a session.
-- **Ops awareness:** deployed to Railway with realistic constraints (cold starts, env-based config, CORS).
+**Warmup check:** `GET /ready` returns `{"ready": true}` once InsightFace has finished loading. If it returns `false`, wait a few seconds and try again.
 
 ---
 
-## Repository layout
+## Architecture
+
+The backend follows a strict three-layer separation:
 
 ```
-backend/          # FastAPI app (app/main.py, routers, models, face utils)
-frontend/         # React + Vite SPA
-Student App/      # Flutter client 
+Router  →  Service  →  Repository  →  Database
+```
 
+| Layer | Responsibility |
+|---|---|
+| **Router** | HTTP concerns only — `Depends()`, path params, schema validation, one service call |
+| **Service** | Business logic — permission checks, state machine, raises `HTTPException` |
+| **Repository** | Data access only — ORM queries, commits, refreshes. No business logic |
+
+```
+backend/app/
+├── repositories/      # pure data-access (UserRepository, CourseRepository, …)
+├── services/          # business logic (UserService, SessionService, …)
+├── auth/              # JWT login endpoint + role-based dependencies
+├── users/             # thin router → UserService
+├── courses/           # thin router → CourseService
+├── sessions/          # thin router → SessionService
+├── attendance/        # thin router → AttendanceService
+├── models/            # SQLAlchemy ORM entities
+├── schemas/           # Pydantic request / response schemas
+└── utils/             # face.py (InsightFace), security.py (bcrypt / JWT)
 ```
 
 ---
 
-## Core features
+## Features
 
-- **Admin:** users CRUD, Excel bulk import, course & enrollment management, student photo upload (embeddings), global attendance view, password policies.
-- **Teacher:** start/end/submit sessions, live browser camera → `POST /attendance/mark`, manual edits, retake, reports.
-- **Student (web + Flutter):** courses, attendance history, percentages, low-attendance notifications.
+### Admin
+- Create, update, and delete users (students, teachers, admins)
+- Excel bulk import of users
+- Course management — create courses, assign teachers and students
+- Upload student face photos (triggers ArcFace embedding extraction)
+- View all attendance records across all courses
+- Reset and manage passwords
+
+### Teacher
+- Start, end, continue, and submit attendance sessions
+- Live face recognition — browser captures frames, client-side SCRFD detects faces, server runs ArcFace recognition
+- Manual attendance edits and retake support
+- Per-session attendance reports
+
+### Student (Web + Flutter)
+- View enrolled courses and session history
+- Per-course attendance percentage
+- Low-attendance notification when below 75%
+- Upload own face photo for enrollment
 
 ---
 
-## Local development
+## Face Recognition Pipeline
+
+1. **Enrollment:** Admin (or student) uploads a photo → server runs InsightFace to extract a 512-dim ArcFace embedding → stored in the database.
+2. **Live session:** Browser runs SCRFD via ONNX Runtime Web to detect faces → sends cropped face images to `POST /attendance/mark-crops` → server runs ArcFace on each crop → cosine similarity match against enrolled students → attendance record upserted.
+
+No dlib, no cmake, no C++ build environment needed — InsightFace ships pre-built ONNX models.
+
+---
+
+## Local Development
 
 ### Prerequisites
 
-- Python 3.11+
+- Python 3.10+
 - Node.js 18+
-- OS tooling for `face_recognition` / **dlib** (see [face_recognition](https://github.com/ageitgey/face_recognition) — Windows often needs Visual Studio Build Tools + cmake).
 
 ### Backend
 
 ```bash
 cd backend
 python -m venv .venv
-.venv\Scripts\activate   # Windows
-# source .venv/bin/activate   # macOS / Linux
+
+# Windows
+.venv\Scripts\activate
+
+# macOS / Linux
+# source .venv/bin/activate
 
 pip install -r requirements.txt
 ```
 
-**Database (first time):**
-
-```bash
-python -m app.database
-sqlite3 face_recognition_attendance.db ".read migrations/001_initial.sql"
-python scripts/migrate_password_changed.py
-python scripts/seed_admin.py
-```
-
-**Run:**
-
-```bash
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-**`.env` (example):**
+Create `backend/.env`:
 
 ```env
 JWT_SECRET=change-me-in-production
 DATABASE_URL=sqlite:///./face_recognition_attendance.db
 UPLOAD_DIR=backend/uploads
 CORS_ALLOWED_ORIGINS=http://localhost:5173
+
+# Optional — override the super-admin identity (defaults shown)
+# SUPER_ADMIN_EMAIL=admin@example.com
+# SUPER_ADMIN_NAME=Super Admin
+```
+
+Seed the initial admin account:
+
+```bash
+python scripts/seed_admin.py
+```
+
+Database tables are created automatically on first startup — no migration commands needed.
+
+Start the server:
+
+```bash
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ### Frontend
@@ -118,29 +163,63 @@ VITE_API_BASE_URL=http://localhost:8000
 npm run dev
 ```
 
-App: `http://localhost:5173` · API docs: `http://localhost:8000/docs`
+- Web app: `http://localhost:5173`
+- API docs: `http://localhost:8000/docs`
 
 ---
 
-## API surface (summary)
+## Running the Tests
 
-| Area | Examples |
-|------|-----------|
+```bash
+cd backend
+python -m pytest tests/ -v
+```
+
+47 unit tests, all in-memory — no database, no running server, no InsightFace needed. Runs in under 2 seconds.
+
+| File | Tests | What it covers |
+|---|---|---|
+| `tests/test_user_service.py` | 20 | Permission logic, cascade deletes, password flows |
+| `tests/test_session_service.py` | 14 | Session state machine, ownership checks |
+| `tests/test_attendance_service.py` | 13 | Retake/edit guards, notification threshold, recognition guards |
+
+---
+
+## API Reference
+
+Full interactive documentation is available at `/docs` on a running server.
+
+| Area | Key Endpoints |
+|---|---|
 | Auth | `POST /auth/login` |
-| Admin | `/admin/users`, bulk upload, photo upload |
-| Courses | `/courses`, assign teacher/student |
-| Sessions | `/sessions/start`, `/sessions/submit`, … |
-| Attendance | `/attendance/mark`, history, notifications |
+| Users | `GET /admin/users` · `POST /admin/users` · `POST /admin/bulk-upload` |
+| Photos | `POST /admin/users/photo` · `POST /admin/students/photo` |
+| Courses | `GET /courses` · `POST /courses` · `POST /courses/assign-student` |
+| Sessions | `POST /sessions/start` · `POST /sessions/submit` · `GET /sessions/{id}` |
+| Attendance | `POST /attendance/mark-crops` · `GET /attendance/notifications` |
+| Health | `GET /ready` |
 
-Full contract: **`/docs`** on a running backend.
+---
+
+## Security
+
+| Area | Implementation |
+|---|---|
+| Passwords | bcrypt (cost factor 8 ≈ 25 ms per hash); old hashes upgraded transparently on login |
+| Authentication | JWT bearer tokens, 12-hour expiry |
+| Rate limiting | `/auth/login` limited to 10 requests/minute per IP |
+| File uploads | Original filename never written to disk — UUID generated per upload (path-traversal prevention) |
+| Super-admin | Identity configurable via `SUPER_ADMIN_EMAIL` env var instead of being hardcoded |
 
 ---
 
 ## Troubleshooting
 
-| Issue | What to check |
-|--------|----------------|
-| Frontend cannot reach API | Backend running; `VITE_API_BASE_URL` / Railway env; CORS includes frontend origin |
-| Railway first load slow | Cold start — hit `/docs` first, retry |
-| Face recognition errors | dlib / cmake / image quality; students must have embeddings registered |
-| DB errors | Migrations and `DATABASE_URL` path writable |
+| Problem | Fix |
+|---|---|
+| Frontend shows API errors | Confirm backend is running and `VITE_API_BASE_URL` is correct |
+| Railway cold start timeout | Hit `/docs` first, poll `/ready` until `{"ready": true}`, then use the app |
+| `{"ready": false}` | InsightFace still warming up — wait 30–60 s after a cold start |
+| Face not recognised | Check the student has a photo enrolled and the photo contains one clear face |
+| Login rate limit (429) | Wait 1 minute — the limit resets per IP per minute |
+| Database errors | Confirm `DATABASE_URL` is set and the path is writable |
