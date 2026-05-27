@@ -3,7 +3,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict
 
-AttendanceStatus = Literal["present", "absent", "late", "excused"]
+AttendanceStatus = Literal["present", "absent"]
 
 
 class AttendanceBase(BaseModel):

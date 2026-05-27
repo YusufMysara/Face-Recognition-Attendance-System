@@ -81,7 +81,7 @@ class Attendance(Base):
     session_id = Column(Integer, ForeignKey("sessions.id"), nullable=False)
     student_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     status = Column(
-        Enum("present", "absent", "late", "excused", name="attendance_status"),
+        Enum("present", "absent", name="attendance_status"),
         nullable=False,
     )
     timestamp = Column(DateTime, default=datetime.utcnow, nullable=False)

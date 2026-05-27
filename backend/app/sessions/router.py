@@ -69,7 +69,7 @@ def get_session(
 @router.delete("/{session_id}")
 def delete_session(
     session_id: int,
-    current_user: User = Depends(require_role("teacher")),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     return SessionService(db).delete(session_id, current_user)

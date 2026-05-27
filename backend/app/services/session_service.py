@@ -93,7 +93,14 @@ class SessionService:
 
     def delete(self, session_id: int, current_user: User) -> dict:
         session = self._require_session(session_id)
-        self._require_owner(session, current_user.id)
+        if session.status == "submitted":
+            if current_user.role != "admin":
+                raise HTTPException(
+                    status_code=403,
+                    detail="Only admins can delete submitted sessions",
+                )
+        else:
+            self._require_owner(session, current_user.id)
         self.repo.delete(session)
         self.db.commit()
         return {"detail": "Session deleted"}
