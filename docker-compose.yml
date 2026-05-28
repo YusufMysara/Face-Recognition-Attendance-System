@@ -1,5 +1,22 @@
 services:
 
+  # ── PostgreSQL database ───────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: attendance
+      POSTGRES_USER: attendance
+      POSTGRES_PASSWORD: attendance
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U attendance -d attendance"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
   # ── Backend (FastAPI + InsightFace) ─────────────────────────────────────────
   backend:
     build:
@@ -7,16 +24,17 @@ services:
     environment:
       # Change this before deploying to production.
       JWT_SECRET: dev-secret-change-in-production-32chars
-      # SQLite stored in a named volume so data survives container restarts.
-      DATABASE_URL: sqlite:////app/db/face_recognition_attendance.db
-      # Uploaded face photos stored in a separate named volume.
+      DATABASE_URL: postgresql://attendance:attendance@db:5432/attendance
+      # Uploaded face photos stored in a named volume.
       UPLOAD_DIR: /app/uploads
       # Allow requests only from the nginx frontend container.
       CORS_ALLOWED_ORIGINS: http://localhost
       PORT: "8000"
     volumes:
-      - db_data:/app/db
       - uploads:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       # /ready returns 200 as soon as uvicorn is up (InsightFace warms up in
@@ -46,5 +64,5 @@ services:
 
 # ── Named volumes ─────────────────────────────────────────────────────────────
 volumes:
-  db_data:   # SQLite database file
-  uploads:   # Uploaded face photos / embeddings
+  postgres_data:   # PostgreSQL data directory
+  uploads:         # Uploaded face photos / embeddings
