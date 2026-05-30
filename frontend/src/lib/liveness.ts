@@ -30,7 +30,7 @@ const BLINK_MAX_FRAMES = 8;
 
 // ── Motion (far face) constants ───────────────────────────────────────────────
 /** Mean absolute luminance difference (0–255) between frames to count as motion. */
-const MOTION_THRESH    = 8.0;
+const MOTION_THRESH    = 10.0;
 /** Frames before a motion-mode spoof verdict. */
 const MOTION_SAMPLES   = 25;
 /** Minimum samples before evaluating the motion verdict (guards against jitter spikes). */
