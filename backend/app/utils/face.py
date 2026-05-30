@@ -12,6 +12,7 @@ import numpy as np
 import onnxruntime as ort
 from fastapi import HTTPException, UploadFile
 from insightface.app import FaceAnalysis
+from skimage import transform as _skimage_transform
 
 from app.config import get_settings
 
@@ -84,8 +85,7 @@ def get_rec_session() -> ort.InferenceSession:
 
 def _align_crop(img: np.ndarray, kps: np.ndarray, size: int = 112) -> np.ndarray:
     """Affine-warp img so that kps align to the ArcFace standard 5-point template."""
-    from skimage import transform as trans
-    tform = trans.SimilarityTransform()
+    tform = _skimage_transform.SimilarityTransform()
     tform.estimate(kps, _ARCFACE_DST)
     M = tform.params[:2, :]
     return cv2.warpAffine(img, M, (size, size), borderValue=0.0)

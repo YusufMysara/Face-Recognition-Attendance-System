@@ -37,7 +37,7 @@ def _warmup():
     global _models_ready
     import time
     import numpy as np
-    from app.utils.face import get_face_app, get_rec_session
+    from app.utils.face import embedding_from_crop, get_face_app, get_rec_session
 
     # ── Phase 1: warm SCRFD (used for enrollment + mark_full_frame) ──────────
     sizes = [(320, 320), (224, 224), (112, 112), (480, 360)]
@@ -70,14 +70,28 @@ def _warmup():
     # enough — the pool initialises lazily and the first real inference still
     # blocks for ~7-15 s.  Running batches with short pauses forces the pool
     # to fully wake up before any user request arrives.
-    session    = get_rec_session()
-    input_name = session.get_inputs()[0].name
-    dummy_blob = np.zeros((1, 3, 112, 112), dtype=np.float32)
-    for batch in range(5):
-        for _ in range(4):
-            session.run(None, {input_name: dummy_blob})
-        time.sleep(0.3)
-    logger.info("  ✓ ArcFace ONNX session warmed (20 passes, %s)", input_name)
+    # Warm the full embedding_from_crop() pipeline — alignment + ONNX inference.
+    # Calling session.run() directly in previous attempts skipped the skimage
+    # import inside _align_crop(), causing a 5-10 s first-request freeze on
+    # Windows when scipy/skimage initialised lazily.  Using the real function
+    # with realistic keypoints exercises every code path the live requests use.
+    dummy_img = np.zeros((112, 112, 3), dtype=np.uint8)
+    dummy_kps = [          # sensible 5-point face layout for a non-trivial warp
+        [38.0, 52.0],
+        [74.0, 52.0],
+        [56.0, 72.0],
+        [44.0, 90.0],
+        [68.0, 90.0],
+    ]
+    for _ in range(5):
+        embedding_from_crop(dummy_img, dummy_kps)
+
+    # Verify the model produces a valid 512-dim output before unlocking the UI.
+    test_result = embedding_from_crop(dummy_img, dummy_kps)
+    if test_result is None or test_result.shape != (512,):
+        logger.error("ArcFace self-test FAILED — recognition will not work")
+    else:
+        logger.info("  ✓ ArcFace self-test passed (512-dim embedding confirmed)")
 
     # Start keepalive BEFORE marking ready so it is already pumping by the
     # time the frontend unlocks and the first recognition request arrives.
