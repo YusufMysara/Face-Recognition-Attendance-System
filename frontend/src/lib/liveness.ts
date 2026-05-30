@@ -216,7 +216,11 @@ export class BlinkLivenessTracker {
   getState(det: { x: number; y: number; width: number; height: number }): LivenessState {
     const cx = det.x + det.width  / 2;
     const cy = det.y + det.height / 2;
-    const matchDist = Math.max(MATCH_DIST, Math.max(det.width, det.height) * 1.5);
+    // Use a tight fixed radius here — we're looking up THIS face's own track,
+    // not merging jittery detections.  The 1.5× face-size scaling used in
+    // update() is correct for tracking but causes two nearby faces to share
+    // liveness state: one blink would make both "live".
+    const matchDist = MATCH_DIST;
 
     const candidates = this.tracks.filter(
       t => Math.hypot(cx - t.cx, cy - t.cy) < matchDist,
