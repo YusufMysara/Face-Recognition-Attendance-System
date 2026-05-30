@@ -9,6 +9,7 @@ from typing import Optional
 
 import cv2
 import numpy as np
+import onnxruntime as ort
 from fastapi import HTTPException, UploadFile
 from insightface.app import FaceAnalysis
 
@@ -17,14 +18,13 @@ from app.config import get_settings
 settings = get_settings()
 _log = logging.getLogger(__name__)
 
-# ── InsightFace singletons ───────────────────────────────────────────────────
+# ── InsightFace full-pipeline singleton (SCRFD + ArcFace) ────────────────────
+# Used for photo enrollment and mark_full_frame only.
 _face_app: Optional[FaceAnalysis] = None
-_arcface_app: Optional[FaceAnalysis] = None  # recognition-only, no SCRFD
-_rec_model = None
 
 
 def get_face_app() -> FaceAnalysis:
-    """Full pipeline (SCRFD + ArcFace) — used for enrollment and mark_full_frame."""
+    """SCRFD + ArcFace pipeline — used for enrollment and mark_full_frame."""
     global _face_app
     if _face_app is None:
         _face_app = FaceAnalysis(
@@ -36,60 +36,79 @@ def get_face_app() -> FaceAnalysis:
     return _face_app
 
 
-def get_arcface_app() -> FaceAnalysis:
-    """ArcFace-only instance — no SCRFD loaded, used for mark_crops."""
-    global _arcface_app
-    if _arcface_app is None:
-        _arcface_app = FaceAnalysis(
-            name="buffalo_s",
-            allowed_modules=["recognition"],
+# ── Direct ArcFace ONNX session (no InsightFace, no SCRFD) ───────────────────
+# Used for mark_crops — crops are pre-detected by the browser's SCRFD so we
+# only need the recognition model.  Loading it via onnxruntime directly avoids
+# InsightFace's FaceAnalysis assertion that requires a detection model.
+_rec_session: Optional[ort.InferenceSession] = None
+
+# Standard 5-point landmark targets for ArcFace 112×112 alignment.
+_ARCFACE_DST = np.array([
+    [38.2946, 51.6963],
+    [73.5318, 51.5014],
+    [56.0252, 71.7366],
+    [41.5493, 92.3655],
+    [70.7299, 92.2041],
+], dtype=np.float32)
+
+
+def get_rec_session() -> ort.InferenceSession:
+    """Return the ArcFace ONNX session, loading it from disk on first call."""
+    global _rec_session
+    if _rec_session is None:
+        model_path = (
+            Path.home() / ".insightface" / "models" / "buffalo_s" / "w600k_mbf.onnx"
+        )
+        if not model_path.exists():
+            raise FileNotFoundError(
+                f"ArcFace model not found at {model_path}. "
+                "Run the server once with InsightFace to download it."
+            )
+        _rec_session = ort.InferenceSession(
+            str(model_path),
             providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
         )
-        _arcface_app.prepare(ctx_id=0, det_size=(112, 112))
-    return _arcface_app
+        _log.info("ArcFace ONNX session loaded: %s", model_path.name)
+    return _rec_session
 
 
-def get_rec_model():
-    """Return the ArcFace recognition model from the recognition-only app.
-
-    Resolved once and cached for the process lifetime. Used by
-    embedding_from_crop() — no SCRFD involved.
-    """
-    global _rec_model
-    if _rec_model is None:
-        app = get_arcface_app()
-        for taskname, model in getattr(app, "models", {}).items():
-            if callable(getattr(model, "get_feat", None)):
-                _rec_model = model
-                _log.info("ArcFace model resolved from task '%s'", taskname)
-                break
-        if _rec_model is None:
-            raise RuntimeError("ArcFace recognition model not found")
-    return _rec_model
+def _align_crop(img: np.ndarray, kps: np.ndarray, size: int = 112) -> np.ndarray:
+    """Affine-warp img so that kps align to the ArcFace standard 5-point template."""
+    from skimage import transform as trans
+    tform = trans.SimilarityTransform()
+    tform.estimate(kps, _ARCFACE_DST)
+    M = tform.params[:2, :]
+    return cv2.warpAffine(img, M, (size, size), borderValue=0.0)
 
 
 def embedding_from_crop(
     img: np.ndarray,
     kps: Optional[list] = None,
 ) -> Optional[np.ndarray]:
-    """Extract a 512-dim ArcFace embedding from a face crop.
+    """Extract a 512-dim ArcFace embedding directly from a face crop.
 
-    kps: 5-point landmarks [[x,y]×5] in crop-local coordinates, as detected
-         by the browser's SCRFD.  Used to align the face before ArcFace so
-         the embedding matches the aligned embeddings stored at enrollment.
-         Falls back to a plain 112×112 resize when kps is None (less accurate).
+    kps: 5-point landmarks [[x,y]×5] in crop-local coordinates sent by the
+         browser alongside each JPEG crop.  Used to align the face to the same
+         112×112 pose used during enrollment so the embeddings are comparable.
+         Falls back to a plain center-resize when kps is None (less accurate).
     """
     try:
         if kps is not None:
-            from insightface.utils import face_align
-            kps_array = np.array(kps, dtype=np.float32)   # (5, 2)
-            aligned = face_align.norm_crop(img, kps_array)
+            aligned = _align_crop(img, np.array(kps, dtype=np.float32))
         else:
             aligned = cv2.resize(img, (112, 112))
-        feats = get_rec_model().get_feat([aligned])
-        return feats[0].astype(np.float32)
+
+        # Preprocess: BGR→RGB, normalize to [-1, 1], NCHW float32
+        blob = aligned[:, :, ::-1].astype(np.float32)
+        blob = (blob - 127.5) / 127.5
+        blob = blob.transpose(2, 0, 1)[np.newaxis, :]  # (1, 3, 112, 112)
+
+        session = get_rec_session()
+        input_name = session.get_inputs()[0].name
+        outputs = session.run(None, {input_name: blob})
+        return outputs[0][0].astype(np.float32)
     except Exception as exc:
-        _log.warning("Direct ArcFace inference failed: %s", exc)
+        _log.warning("ArcFace inference failed: %s", exc)
         return None
 
 
@@ -98,26 +117,28 @@ _keepalive_thread: Optional[threading.Thread] = None
 
 
 def start_face_keepalive() -> None:
-    """Keep ONNX thread pool warm to avoid 7-second re-wake penalty on Windows."""
+    """Keep both ONNX thread pools warm to avoid cold-start latency on Windows."""
     global _keepalive_thread
     if _keepalive_thread is not None:
         return
 
-    _scrfd_dummy   = np.zeros((64, 64, 3),   dtype=np.uint8)
-    _arcface_dummy = np.zeros((112, 112, 3), dtype=np.uint8)
+    _scrfd_dummy = np.zeros((64, 64, 3), dtype=np.uint8)
 
     def _heartbeat() -> None:
-        rec_model = get_rec_model()  # already resolved and cached by warmup
+        session    = get_rec_session()  # already loaded by warmup
+        input_name = session.get_inputs()[0].name
+        dummy_blob = np.zeros((1, 3, 112, 112), dtype=np.float32)
+
         while True:
             time.sleep(0.4)
             try:
-                # Keep full-pipeline SCRFD warm (used for enrollment + mark_full_frame)
+                # Keep SCRFD warm (used for enrollment + mark_full_frame)
                 get_face_app().get(_scrfd_dummy, max_num=1)
             except Exception:
                 pass
             try:
-                # Keep ArcFace-only model warm (used for mark_crops)
-                rec_model.get_feat([_arcface_dummy])
+                # Keep ArcFace ONNX session warm (used for mark_crops)
+                session.run(None, {input_name: dummy_blob})
             except Exception:
                 pass
 

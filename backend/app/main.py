@@ -36,37 +36,40 @@ def _warmup():
     """
     global _models_ready
     import numpy as np
-    from app.utils.face import get_arcface_app, get_face_app, get_rec_model
+    from app.utils.face import get_face_app, get_rec_session
 
-    # ── Phase 1: warm SCRFD (full pipeline — used for enrollment + mark_full_frame)
+    # ── Phase 1: warm SCRFD (used for enrollment + mark_full_frame) ──────────
     sizes = [(320, 320), (224, 224), (112, 112), (480, 360)]
     logger.info("Warming up SCRFD detection model…")
     for h, w in sizes:
         dummy = np.zeros((h, w, 3), dtype=np.uint8)
         get_face_app().get(dummy)
 
-    # ── Phase 2: warm ArcFace directly ───────────────────────────────────────
-    # get_face_app() SCRFD finds no faces in black images so ArcFace inside it
-    # was never triggered above.  Warm both ArcFace instances (full-pipeline and
-    # recognition-only) via direct get_feat() calls.
+    # ── Phase 2: warm ArcFace ONNX session (used for mark_crops) ─────────────
+    # SCRFD finds no faces in black images so the ArcFace model inside
+    # get_face_app() was never triggered above.  Warm it via direct get_feat()
+    # calls.  Also load and warm the standalone ArcFace session used by
+    # embedding_from_crop() so the first live request has no cold-start delay.
     logger.info("Warming up ArcFace recognition models…")
-    arcface_dummy = np.zeros((112, 112, 3), dtype=np.uint8)
-    for app_instance in [get_face_app(), get_arcface_app()]:
-        for taskname, model in getattr(app_instance, "models", {}).items():
-            if taskname == "detection":
-                continue
-            get_feat = getattr(model, "get_feat", None)
-            if callable(get_feat):
-                try:
-                    for _ in range(3):   # 3 passes ensure full JIT path coverage
-                        get_feat([arcface_dummy])
-                    logger.info("  ✓ warmed ArcFace task '%s'", taskname)
-                except Exception as exc:
-                    logger.warning("  ArcFace warmup skipped for '%s': %s", taskname, exc)
+    arcface_dummy_insight = np.zeros((112, 112, 3), dtype=np.uint8)
+    for taskname, model in getattr(get_face_app(), "models", {}).items():
+        if taskname == "detection":
+            continue
+        get_feat = getattr(model, "get_feat", None)
+        if callable(get_feat):
+            try:
+                for _ in range(3):
+                    get_feat([arcface_dummy_insight])
+                logger.info("  ✓ warmed InsightFace ArcFace task '%s'", taskname)
+            except Exception as exc:
+                logger.warning("  InsightFace ArcFace warmup skipped: %s", exc)
 
-    # Cache the recognition model singleton — no lookup overhead on first request.
-    get_rec_model()
-    logger.info("  ✓ ArcFace recognition-only model singleton cached")
+    session    = get_rec_session()          # loads w600k_mbf.onnx from disk
+    input_name = session.get_inputs()[0].name
+    dummy_blob = np.zeros((1, 3, 112, 112), dtype=np.float32)
+    for _ in range(3):
+        session.run(None, {input_name: dummy_blob})
+    logger.info("  ✓ ArcFace ONNX session warmed (%s)", session.get_inputs()[0].name)
 
     _models_ready = True
     logger.info("InsightFace warm-up complete — all models ready.")
