@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.models import Attendance as AttendanceModel, User
 from app.repositories.attendance_repository import AttendanceRepository
 from app.schemas.attendance import AttendanceEdit, AttendanceResponse, RetakeRequest
-from app.utils.face import bytes_to_bgr, get_face_app, get_face_app_crops
+from app.utils.face import bytes_to_bgr, embedding_from_crop, get_face_app
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +145,11 @@ class AttendanceService:
     def mark_crops(
         self, session_id: int, files: List[UploadFile], current_user: User
     ) -> Dict[str, Any]:
-        """ArcFace-only recognition on pre-detected face crops from the client (SCRFD)."""
+        """ArcFace-only recognition on pre-detected face crops from the client (SCRFD).
+
+        SCRFD is skipped on the backend — the browser already ran it and sent a
+        tight face crop, so calling get_feat() directly saves ~15-30 ms per crop.
+        """
         session = self._require_session(session_id)
         if session.status == "submitted":
             raise HTTPException(status_code=400, detail="Session already submitted")
@@ -158,7 +162,6 @@ class AttendanceService:
                 status_code=400, detail="No valid face embeddings registered."
             )
 
-        face_app = get_face_app_crops()
         results: List[Dict[str, Any]] = []
         t_start = time.perf_counter()
 
@@ -178,16 +181,15 @@ class AttendanceService:
                 )
                 continue
 
-            # max_num=1: only process the single largest face in the crop.
-            faces = face_app.get(img, max_num=1)
-            t_insight = time.perf_counter()
+            embedding = embedding_from_crop(img)
+            t_arcface = time.perf_counter()
             logger.info(
-                "[timing] crop %d: InsightFace=%d ms",
+                "[timing] crop %d: ArcFace=%d ms",
                 idx,
-                int(1000 * (t_insight - t_crop)),
+                int(1000 * (t_arcface - t_crop)),
             )
 
-            if not faces:
+            if embedding is None:
                 results.append(
                     {
                         "face_index": idx,
@@ -198,12 +200,6 @@ class AttendanceService:
                 )
                 continue
 
-            face = max(
-                faces,
-                key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]),
-            )
-
-            embedding = face.embedding.astype(np.float32)
             norm = np.linalg.norm(embedding)
             if norm > 0:
                 embedding = embedding / norm

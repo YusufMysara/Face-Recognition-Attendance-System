@@ -20,6 +20,7 @@ _log = logging.getLogger(__name__)
 # ── InsightFace singletons ───────────────────────────────────────────────────
 _face_app: Optional[FaceAnalysis] = None
 _face_app_crops: Optional[FaceAnalysis] = None
+_rec_model = None  # ArcFace recognition model, resolved once from _face_app_crops
 
 
 def get_face_app() -> FaceAnalysis:
@@ -47,6 +48,43 @@ def get_face_app_crops() -> FaceAnalysis:
     return _face_app_crops
 
 
+def get_rec_model():
+    """Return the ArcFace recognition model, bypassing SCRFD entirely.
+
+    Resolved once from get_face_app_crops() and cached for the process lifetime.
+    Used by mark_crops — the crop is already a tight face region so detection
+    is redundant; calling get_feat() directly saves ~15-30 ms per crop.
+    """
+    global _rec_model
+    if _rec_model is None:
+        app = get_face_app_crops()
+        for taskname, model in getattr(app, "models", {}).items():
+            if taskname != "detection" and callable(getattr(model, "get_feat", None)):
+                _rec_model = model
+                _log.info("ArcFace model resolved from task '%s'", taskname)
+                break
+        if _rec_model is None:
+            raise RuntimeError("ArcFace recognition model not found in InsightFace app")
+    return _rec_model
+
+
+def embedding_from_crop(img: np.ndarray) -> Optional[np.ndarray]:
+    """Extract a 512-dim ArcFace embedding directly from a face crop.
+
+    Skips SCRFD — the crop is assumed to already contain one face (sent by the
+    browser after its own SCRFD pass).  get_feat() resizes to 112×112 and
+    normalises internally, so no preprocessing is needed here.
+
+    Returns a float32 array on success, None on any failure.
+    """
+    try:
+        feats = get_rec_model().get_feat([img])
+        return feats[0].astype(np.float32)
+    except Exception as exc:
+        _log.warning("Direct ArcFace inference failed: %s", exc)
+        return None
+
+
 # ── ONNX keepalive ────────────────────────────────────────────────────────────
 _keepalive_thread: Optional[threading.Thread] = None
 
@@ -61,25 +99,17 @@ def start_face_keepalive() -> None:
     _arcface_dummy = np.zeros((112, 112, 3), dtype=np.uint8)
 
     def _heartbeat() -> None:
-        rec_model = None
-        app = get_face_app_crops()
-        for taskname, model in getattr(app, "models", {}).items():
-            if taskname != "detection" and callable(getattr(model, "get_feat", None)):
-                rec_model = model
-                _log.info("Keepalive: found ArcFace model under task '%s'", taskname)
-                break
-
+        rec_model = get_rec_model()  # already resolved and cached by warmup
         while True:
             time.sleep(0.4)
             try:
                 get_face_app_crops().get(_scrfd_dummy, max_num=1)
             except Exception:
                 pass
-            if rec_model is not None:
-                try:
-                    rec_model.get_feat([_arcface_dummy])
-                except Exception:
-                    pass
+            try:
+                rec_model.get_feat([_arcface_dummy])
+            except Exception:
+                pass
 
     _keepalive_thread = threading.Thread(
         target=_heartbeat, daemon=True, name="onnx-keepalive"

@@ -36,7 +36,7 @@ def _warmup():
     """
     global _models_ready
     import numpy as np
-    from app.utils.face import get_face_app, get_face_app_crops
+    from app.utils.face import get_face_app, get_face_app_crops, get_rec_model
 
     # ── Phase 1: warm SCRFD (detection) via full-pipeline calls ──────────────
     sizes = [(320, 320), (224, 224), (112, 112), (480, 360)]
@@ -64,6 +64,11 @@ def _warmup():
                     logger.info("  ✓ warmed ArcFace task '%s'", taskname)
                 except Exception as exc:
                     logger.warning("  ArcFace warmup skipped for '%s': %s", taskname, exc)
+
+    # Cache the ArcFace singleton now so the first mark-crops request and the
+    # keepalive thread both get a pre-resolved model with no lookup overhead.
+    get_rec_model()
+    logger.info("  ✓ ArcFace recognition model singleton cached")
 
     _models_ready = True
     logger.info("InsightFace warm-up complete — all models ready.")
