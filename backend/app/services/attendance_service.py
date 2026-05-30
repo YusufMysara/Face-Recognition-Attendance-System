@@ -143,12 +143,18 @@ class AttendanceService:
         return {"attendance": attendance_responses, "detected_faces": detected_faces}
 
     def mark_crops(
-        self, session_id: int, files: List[UploadFile], current_user: User
+        self,
+        session_id: int,
+        files: List[UploadFile],
+        kps_list: Optional[List],
+        current_user: User,
     ) -> Dict[str, Any]:
-        """ArcFace-only recognition on pre-detected face crops from the client (SCRFD).
+        """ArcFace-only recognition on pre-detected face crops from the client.
 
-        SCRFD is skipped on the backend — the browser already ran it and sent a
-        tight face crop, so calling get_feat() directly saves ~15-30 ms per crop.
+        kps_list: per-crop 5-point landmarks [[x,y]×5, ...] in crop-local
+                  coordinates sent by the browser alongside each JPEG crop.
+                  Used to align the face before ArcFace, matching the alignment
+                  used during enrollment so embeddings are comparable.
         """
         session = self._require_session(session_id)
         if session.status == "submitted":
@@ -181,7 +187,8 @@ class AttendanceService:
                 )
                 continue
 
-            embedding = embedding_from_crop(img)
+            kps = kps_list[idx] if kps_list and idx < len(kps_list) else None
+            embedding = embedding_from_crop(img, kps)
             t_arcface = time.perf_counter()
             logger.info(
                 "[timing] crop %d: ArcFace=%d ms",

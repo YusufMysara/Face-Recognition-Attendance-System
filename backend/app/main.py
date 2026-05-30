@@ -36,23 +36,22 @@ def _warmup():
     """
     global _models_ready
     import numpy as np
-    from app.utils.face import get_face_app, get_face_app_crops, get_rec_model
+    from app.utils.face import get_arcface_app, get_face_app, get_rec_model
 
-    # ── Phase 1: warm SCRFD (detection) via full-pipeline calls ──────────────
+    # ── Phase 1: warm SCRFD (full pipeline — used for enrollment + mark_full_frame)
     sizes = [(320, 320), (224, 224), (112, 112), (480, 360)]
-    logger.info("Warming up InsightFace SCRFD detection models…")
+    logger.info("Warming up SCRFD detection model…")
     for h, w in sizes:
         dummy = np.zeros((h, w, 3), dtype=np.uint8)
         get_face_app().get(dummy)
-        get_face_app_crops().get(dummy)
 
-    # ── Phase 2: warm ArcFace recognition models directly ────────────────────
-    # SCRFD finds no faces in black images → ArcFace's ONNX session was never
-    # called above.  Call get_feat() directly with a 112×112 dummy to compile
-    # the graph and load weights into CPU cache before the first real request.
-    logger.info("Warming up ArcFace recognition models (direct get_feat calls)…")
+    # ── Phase 2: warm ArcFace directly ───────────────────────────────────────
+    # get_face_app() SCRFD finds no faces in black images so ArcFace inside it
+    # was never triggered above.  Warm both ArcFace instances (full-pipeline and
+    # recognition-only) via direct get_feat() calls.
+    logger.info("Warming up ArcFace recognition models…")
     arcface_dummy = np.zeros((112, 112, 3), dtype=np.uint8)
-    for app_instance in [get_face_app(), get_face_app_crops()]:
+    for app_instance in [get_face_app(), get_arcface_app()]:
         for taskname, model in getattr(app_instance, "models", {}).items():
             if taskname == "detection":
                 continue
@@ -65,10 +64,9 @@ def _warmup():
                 except Exception as exc:
                     logger.warning("  ArcFace warmup skipped for '%s': %s", taskname, exc)
 
-    # Cache the ArcFace singleton now so the first mark-crops request and the
-    # keepalive thread both get a pre-resolved model with no lookup overhead.
+    # Cache the recognition model singleton — no lookup overhead on first request.
     get_rec_model()
-    logger.info("  ✓ ArcFace recognition model singleton cached")
+    logger.info("  ✓ ArcFace recognition-only model singleton cached")
 
     _models_ready = True
     logger.info("InsightFace warm-up complete — all models ready.")

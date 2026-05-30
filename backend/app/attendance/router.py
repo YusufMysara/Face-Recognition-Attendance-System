@@ -1,4 +1,5 @@
-from typing import List
+import json
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from sqlalchemy.orm import Session
@@ -30,15 +31,17 @@ def mark_attendance(
 def mark_attendance_crops(
     session_id: int = Form(...),
     files: List[UploadFile] = File(...),
+    keypoints: Optional[str] = Form(None),
     current_user: User = Depends(require_role("teacher")),
     db: Session = Depends(get_db),
 ):
     """
-    Hybrid detection endpoint: the client (SCRFD) already detected faces
-    and sends one cropped face image per detected face.
-    This endpoint only runs ArcFace recognition on each crop.
+    ArcFace-only recognition on pre-detected face crops from the client.
+    keypoints: JSON-encoded list of 5-point landmarks per crop [[x,y]×5, ...]
+               in crop-local coordinates, used for face alignment before ArcFace.
     """
-    return AttendanceService(db).mark_crops(session_id, files, current_user)
+    kps_list = json.loads(keypoints) if keypoints else None
+    return AttendanceService(db).mark_crops(session_id, files, kps_list, current_user)
 
 
 @router.post("/retake")

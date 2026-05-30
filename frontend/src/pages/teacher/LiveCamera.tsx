@@ -526,7 +526,8 @@ export default function LiveCamera() {
 
       // ── Phase 1: draw crops for live unrecognised detections ─────────────
       const canvases: HTMLCanvasElement[] = [];
-      const boxes: RecognitionResult["box"][] = [];
+      const boxes:    RecognitionResult["box"][] = [];
+      const allKps:   number[][][] = [];   // per-crop 5-point landmarks in crop coords
 
       for (const det of toRecognize) {
         const { x, y, width, height } = det.box;
@@ -543,6 +544,9 @@ export default function LiveCamera() {
         canvas.getContext("2d")!.drawImage(video, cx2, cy2, cw, ch, 0, 0, cw, ch);
         canvases.push(canvas);
         boxes.push(det.box);
+        // Adjust SCRFD keypoints from video-frame coords to crop-local coords
+        // so the backend can align the face without re-running SCRFD.
+        allKps.push(det.kps.map(kp => [kp.x - cx2, kp.y - cy2]));
       }
 
       if (!canvases.length) return;
@@ -570,7 +574,7 @@ export default function LiveCamera() {
       });
       if (!crops.length) return;
 
-      const response = await attendanceApi.markCrops(session.id, crops);
+      const response = await attendanceApi.markCrops(session.id, crops, allKps);
 
       if (!cameraActiveRef.current) return;
 

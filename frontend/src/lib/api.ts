@@ -399,10 +399,11 @@ export const attendanceApi = {
    * image per detection. Backend only runs ArcFace recognition on each crop.
    * Response: { recognized: [{ face_index, student_id, student_name, score }] }
    */
-  markCrops: async (sessionId: number, crops: Blob[]) => {
+  markCrops: async (sessionId: number, crops: Blob[], kps: number[][][]) => {
     const formData = new FormData();
     formData.append("session_id", String(sessionId));
     crops.forEach((crop, i) => formData.append("files", crop, `face_${i}.jpg`));
+    formData.append("keypoints", JSON.stringify(kps));
 
     const token = getToken();
     const response = await fetch(`${BASE_URL}/attendance/mark-crops`, {

@@ -19,11 +19,12 @@ _log = logging.getLogger(__name__)
 
 # ── InsightFace singletons ───────────────────────────────────────────────────
 _face_app: Optional[FaceAnalysis] = None
-_face_app_crops: Optional[FaceAnalysis] = None
-_rec_model = None  # ArcFace recognition model, resolved once from _face_app_crops
+_arcface_app: Optional[FaceAnalysis] = None  # recognition-only, no SCRFD
+_rec_model = None
 
 
 def get_face_app() -> FaceAnalysis:
+    """Full pipeline (SCRFD + ArcFace) — used for enrollment and mark_full_frame."""
     global _face_app
     if _face_app is None:
         _face_app = FaceAnalysis(
@@ -35,50 +36,57 @@ def get_face_app() -> FaceAnalysis:
     return _face_app
 
 
-def get_face_app_crops() -> FaceAnalysis:
-    """Lighter InsightFace instance for recognising pre-cropped face images."""
-    global _face_app_crops
-    if _face_app_crops is None:
-        _face_app_crops = FaceAnalysis(
+def get_arcface_app() -> FaceAnalysis:
+    """ArcFace-only instance — no SCRFD loaded, used for mark_crops."""
+    global _arcface_app
+    if _arcface_app is None:
+        _arcface_app = FaceAnalysis(
             name="buffalo_s",
-            allowed_modules=["detection", "recognition"],
+            allowed_modules=["recognition"],
             providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
         )
-        _face_app_crops.prepare(ctx_id=0, det_size=(320, 320))
-    return _face_app_crops
+        _arcface_app.prepare(ctx_id=0, det_size=(112, 112))
+    return _arcface_app
 
 
 def get_rec_model():
-    """Return the ArcFace recognition model, bypassing SCRFD entirely.
+    """Return the ArcFace recognition model from the recognition-only app.
 
-    Resolved once from get_face_app_crops() and cached for the process lifetime.
-    Used by mark_crops — the crop is already a tight face region so detection
-    is redundant; calling get_feat() directly saves ~15-30 ms per crop.
+    Resolved once and cached for the process lifetime. Used by
+    embedding_from_crop() — no SCRFD involved.
     """
     global _rec_model
     if _rec_model is None:
-        app = get_face_app_crops()
+        app = get_arcface_app()
         for taskname, model in getattr(app, "models", {}).items():
-            if taskname != "detection" and callable(getattr(model, "get_feat", None)):
+            if callable(getattr(model, "get_feat", None)):
                 _rec_model = model
                 _log.info("ArcFace model resolved from task '%s'", taskname)
                 break
         if _rec_model is None:
-            raise RuntimeError("ArcFace recognition model not found in InsightFace app")
+            raise RuntimeError("ArcFace recognition model not found")
     return _rec_model
 
 
-def embedding_from_crop(img: np.ndarray) -> Optional[np.ndarray]:
-    """Extract a 512-dim ArcFace embedding directly from a face crop.
+def embedding_from_crop(
+    img: np.ndarray,
+    kps: Optional[list] = None,
+) -> Optional[np.ndarray]:
+    """Extract a 512-dim ArcFace embedding from a face crop.
 
-    Skips SCRFD — the crop is assumed to already contain one face (sent by the
-    browser after its own SCRFD pass).  get_feat() resizes to 112×112 and
-    normalises internally, so no preprocessing is needed here.
-
-    Returns a float32 array on success, None on any failure.
+    kps: 5-point landmarks [[x,y]×5] in crop-local coordinates, as detected
+         by the browser's SCRFD.  Used to align the face before ArcFace so
+         the embedding matches the aligned embeddings stored at enrollment.
+         Falls back to a plain 112×112 resize when kps is None (less accurate).
     """
     try:
-        feats = get_rec_model().get_feat([img])
+        if kps is not None:
+            from insightface.utils import face_align
+            kps_array = np.array(kps, dtype=np.float32)   # (5, 2)
+            aligned = face_align.norm_crop(img, kps_array)
+        else:
+            aligned = cv2.resize(img, (112, 112))
+        feats = get_rec_model().get_feat([aligned])
         return feats[0].astype(np.float32)
     except Exception as exc:
         _log.warning("Direct ArcFace inference failed: %s", exc)
@@ -103,10 +111,12 @@ def start_face_keepalive() -> None:
         while True:
             time.sleep(0.4)
             try:
-                get_face_app_crops().get(_scrfd_dummy, max_num=1)
+                # Keep full-pipeline SCRFD warm (used for enrollment + mark_full_frame)
+                get_face_app().get(_scrfd_dummy, max_num=1)
             except Exception:
                 pass
             try:
+                # Keep ArcFace-only model warm (used for mark_crops)
                 rec_model.get_feat([_arcface_dummy])
             except Exception:
                 pass
