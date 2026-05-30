@@ -185,6 +185,7 @@ export class BlinkLivenessTracker {
         if (best.prevPixels) {
           const mad = computeMAD(pixels, best.prevPixels);
           best.motionHistory.push(mad);
+          if (best.motionHistory.length > MOTION_SAMPLES) best.motionHistory.shift();
           if (!best.motionDetected && best.motionHistory.length >= MOTION_MIN_EVAL) {
             const medMAD = median(best.motionHistory.slice(-MOTION_MIN_EVAL));
             if (medMAD > MOTION_THRESH) {
