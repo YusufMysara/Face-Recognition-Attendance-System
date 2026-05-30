@@ -556,8 +556,10 @@ export default function LiveCamera() {
 
       if (!canvases.length) return;
 
-      // Show "Checking..." boxes while the backend round-trip is in flight.
+      // Show "Checking..." for unrecognised faces while the backend round-trip
+      // is in flight — but keep already-cached faces showing their name.
       lastRecognitionRef.current = [
+        ...cachedResults,
         ...boxes.map((box) => ({
           face_index: -1, student_id: null, student_name: null,
           score: 0, liveness_checking: true, box,
