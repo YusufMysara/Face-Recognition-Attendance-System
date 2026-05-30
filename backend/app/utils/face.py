@@ -64,8 +64,18 @@ def get_rec_session() -> ort.InferenceSession:
                 f"ArcFace model not found at {model_path}. "
                 "Run the server once with InsightFace to download it."
             )
+        # intra_op_num_threads=1 runs inference in the calling thread directly,
+        # bypassing the ONNX Runtime internal thread pool entirely.  On Windows
+        # the pool initialises lazily per-thread, causing a ~7-15 s freeze on
+        # the first real request even after background warmup.  Single-threaded
+        # mode eliminates the cold start; the latency difference for a 112×112
+        # ArcFace input is under 5 ms.
+        opts = ort.SessionOptions()
+        opts.intra_op_num_threads = 1
+        opts.inter_op_num_threads = 1
         _rec_session = ort.InferenceSession(
             str(model_path),
+            sess_options=opts,
             providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
         )
         _log.info("ArcFace ONNX session loaded: %s", model_path.name)
