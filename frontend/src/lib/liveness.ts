@@ -30,9 +30,11 @@ const BLINK_MAX_FRAMES = 8;
 
 // ── Motion (far face) constants ───────────────────────────────────────────────
 /** Mean absolute luminance difference (0–255) between frames to count as motion. */
-const MOTION_THRESH    = 5.0;
+const MOTION_THRESH    = 8.0;
 /** Frames before a motion-mode spoof verdict. */
 const MOTION_SAMPLES   = 25;
+/** Minimum samples before evaluating the motion verdict (guards against jitter spikes). */
+const MOTION_MIN_EVAL  = 5;
 
 // ── Shared constants ──────────────────────────────────────────────────────────
 const MATCH_DIST    = 100;
@@ -183,12 +185,15 @@ export class BlinkLivenessTracker {
         if (best.prevPixels) {
           const mad = computeMAD(pixels, best.prevPixels);
           best.motionHistory.push(mad);
-          if (!best.motionDetected && mad > MOTION_THRESH) {
-            best.motionDetected = true;
-            console.log(
-              `%c[liveness] ✓ MOTION → LIVE  MAD=${mad.toFixed(2)}  frames=${best.motionHistory.length}`,
-              'color:#22c55e; font-weight:bold',
-            );
+          if (!best.motionDetected && best.motionHistory.length >= MOTION_MIN_EVAL) {
+            const medMAD = median(best.motionHistory.slice(-MOTION_MIN_EVAL));
+            if (medMAD > MOTION_THRESH) {
+              best.motionDetected = true;
+              console.log(
+                `%c[liveness] ✓ MOTION → LIVE  medMAD=${medMAD.toFixed(2)}  samples=${best.motionHistory.length}`,
+                'color:#22c55e; font-weight:bold',
+              );
+            }
           }
           if (best.motionHistory.length % 10 === 0) {
             const maxMAD = Math.max(...best.motionHistory);
