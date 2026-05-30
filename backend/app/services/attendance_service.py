@@ -112,6 +112,7 @@ class AttendanceService:
 
         for face in faces:
             bbox = face.bbox.astype(int).tolist()
+
             embedding = face.embedding.astype(np.float32)
             norm = np.linalg.norm(embedding)
             if norm > 0:
@@ -201,6 +202,7 @@ class AttendanceService:
                 faces,
                 key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]),
             )
+
             embedding = face.embedding.astype(np.float32)
             norm = np.linalg.norm(embedding)
             if norm > 0:

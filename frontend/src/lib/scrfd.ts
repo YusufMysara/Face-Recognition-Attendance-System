@@ -19,6 +19,7 @@ const STRIDES        = [8, 16, 32] as const;
 const NUM_ANCHORS    = 2;
 const SCORE_NAMES    = ['443', '468', '493'] as const;
 const BBOX_NAMES     = ['446', '471', '496'] as const;
+const KPS_NAMES      = ['449', '474', '499'] as const;
 const SCORE_THRESH   = 0.30;  // lowered from 0.45 — catches far/small faces
 const NMS_THRESH     = 0.4;
 
@@ -27,6 +28,8 @@ export interface ScrfdDetection {
   /** Bounding box in original video pixel space. */
   box: { x: number; y: number; width: number; height: number };
   score: number;
+  /** 5 facial keypoints in video pixels: [leftEye, rightEye, nose, leftMouth, rightMouth]. */
+  kps: { x: number; y: number }[];
 }
 
 // ── Detector class ────────────────────────────────────────────────────────────
@@ -91,6 +94,7 @@ export class SCRFDDetector {
 
       const scores = outputs[SCORE_NAMES[si]].data as Float32Array;
       const bboxes = outputs[BBOX_NAMES[si]].data  as Float32Array;
+      const kpss   = outputs[KPS_NAMES[si]].data   as Float32Array;
 
       for (let row = 0; row < featH; row++) {
         for (let col = 0; col < featW; col++) {
@@ -109,9 +113,20 @@ export class SCRFDDetector {
             const x2 = (cx + bboxes[bi + 2] * stride) * scaleX;
             const y2 = (cy + bboxes[bi + 3] * stride) * scaleY;
 
+            // keypoint decoding: anchor_center + offset * stride
+            const ki = idx * 10;
+            const kps: { x: number; y: number }[] = [];
+            for (let k = 0; k < 5; k++) {
+              kps.push({
+                x: (cx + kpss[ki + k * 2]     * stride) * scaleX,
+                y: (cy + kpss[ki + k * 2 + 1] * stride) * scaleY,
+              });
+            }
+
             candidates.push({
               box: { x: x1, y: y1, width: x2 - x1, height: y2 - y1 },
               score,
+              kps,
             });
           }
         }

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { SCRFDDetector, type ScrfdDetection } from "@/lib/scrfd";
+import { LandmarkDetector, computeEAR } from "@/lib/landmark";
+import { BlinkLivenessTracker, type EarSample } from "@/lib/liveness";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -34,7 +36,19 @@ import {
 
 // ── Constants ────────────────────────────────────────────────────────────────
 /** SCRFD-500M ONNX model served from /public/models/. */
-const MODEL_URL = "/models/scrfd_500m.onnx";
+const MODEL_URL          = "/models/scrfd_500m.onnx";
+/** MediaPipe FaceLandmarker model served from /public/models/. */
+const LANDMARK_URL       = "/models/face_landmarker.task";
+/** Faces smaller than this use motion-based liveness instead of EAR. */
+const MIN_LIVENESS_PX    = 80;
+/** Canvas size for face pixel sampling (motion mode). */
+const MOTION_SAMPLE_SIZE = 32;
+/** Min score to cache a recognised face. */
+const CACHE_CONFIRM_THRESH = 0.45;
+/** Max face centre movement (px) to still match a cached entry. */
+const CACHE_MATCH_DIST_PX  = 100;
+/** Re-verify a cached face after this many ms. */
+const CACHE_TTL_MS         = 30_000;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface Course {
@@ -60,30 +74,47 @@ interface DetectedStudent {
   status: "detected";
 }
 
+/** A recognised face held in the frontend cache to avoid redundant backend calls. */
+interface ConfirmedFace {
+  cx: number;
+  cy: number;
+  result: RecognitionResult;
+  confirmedAt: number;
+}
+
 /** One recognition result returned by /attendance/mark-crops. */
 interface RecognitionResult {
   face_index: number;
   student_id: number | null;
   student_name: string | null;
   score: number;
-  /** bbox in video natural pixels — attached on the frontend from SCRFD detections. */
+  liveness_failed?:   boolean;
+  liveness_checking?: boolean;
   box: { x: number; y: number; width: number; height: number };
 }
 
-/**
- * A face that has been recognised with high confidence and is held in the
- * frontend cache so we don't re-send it to the backend every cycle.
- */
-interface ConfirmedFace {
-  /** Face centre in video pixels — updated each detection frame so we track movement. */
-  cx: number;
-  cy: number;
-  result: RecognitionResult;
-  /** Date.now() when this entry was last confirmed by the backend. */
-  confirmedAt: number;
-}
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Sample a face region from the video into a fixed MOTION_SAMPLE_SIZE×MOTION_SAMPLE_SIZE
+ * canvas and return the raw RGBA pixel data for frame-to-frame MAD computation.
+ */
+function sampleFacePixels(
+  video:  HTMLVideoElement,
+  box:    { x: number; y: number; width: number; height: number },
+  canvas: HTMLCanvasElement,
+): Uint8ClampedArray | null {
+  const sx = Math.max(0, Math.round(box.x));
+  const sy = Math.max(0, Math.round(box.y));
+  const sw = Math.min(video.videoWidth  - sx, Math.round(box.width));
+  const sh = Math.min(video.videoHeight - sy, Math.round(box.height));
+  if (sw < 5 || sh < 5) return null;
+  canvas.width  = MOTION_SAMPLE_SIZE;
+  canvas.height = MOTION_SAMPLE_SIZE;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+  ctx.drawImage(video, sx, sy, sw, sh, 0, 0, MOTION_SAMPLE_SIZE, MOTION_SAMPLE_SIZE);
+  return ctx.getImageData(0, 0, MOTION_SAMPLE_SIZE, MOTION_SAMPLE_SIZE).data;
+}
 
 function getObjectFitCoverTransform(video: HTMLVideoElement) {
   const cw = video.clientWidth;
@@ -143,11 +174,13 @@ function drawDetectionBoxes(
     const w = b.width * scale;
     const h = b.height * scale;
 
-    const recognized  = match?.student_id != null;
-    const borderColor = recognized ? "#22c55e" : "#94a3b8";
-    const accentColor = recognized ? "#4ade80" : "#cbd5e1";
-    const labelBg     = recognized ? "#16a34a" : "#475569";
-    const label       = recognized ? match!.student_name! : "Unknown";
+    const spoofed     = match?.liveness_failed    === true;
+    const checking    = !spoofed && match?.liveness_checking === true;
+    const recognized  = !spoofed && !checking && match?.student_id != null;
+    const borderColor = spoofed ? "#ef4444" : checking ? "#f97316" : recognized ? "#22c55e" : "#94a3b8";
+    const accentColor = spoofed ? "#f87171" : checking ? "#fb923c" : recognized ? "#4ade80" : "#cbd5e1";
+    const labelBg     = spoofed ? "#b91c1c" : checking ? "#c2410c" : recognized ? "#16a34a" : "#475569";
+    const label       = spoofed ? "Spoof detected" : checking ? "Checking..." : recognized ? match!.student_name! : "Unknown";
 
     ctx.strokeStyle = borderColor;
     ctx.lineWidth = 2;
@@ -218,29 +251,30 @@ export default function LiveCamera() {
   const latestDetectionsRef  = useRef<ScrfdDetection[]>([]);
   const lastRecognitionRef   = useRef<RecognitionResult[]>([]);
   const detectorRef          = useRef<SCRFDDetector | null>(null);
-  const currentSessionRef    = useRef<Session | null>(null);
-  /**
-   * Cache of faces already confirmed by the backend with high confidence.
-   * Faces in this cache are shown instantly without a backend round-trip.
-   * Entries are evicted when the face moves out of frame or TTL expires.
-   */
+  const landmarkDetectorRef  = useRef<LandmarkDetector | null>(null);
+  const livenessTrackerRef   = useRef(new BlinkLivenessTracker());
+  const motionCanvasRef      = useRef<HTMLCanvasElement>(document.createElement('canvas'));
   const confirmedFacesRef    = useRef<ConfirmedFace[]>([]);
+  const currentSessionRef    = useRef<Session | null>(null);
   useEffect(() => { currentSessionRef.current = currentSession; }, [currentSession]);
 
   const sessionId = searchParams.get("session_id");
   const courseId  = searchParams.get("course_id");
 
-  // ── Load SCRFD-500M model once ────────────────────────────────────────────
+  // ── Load SCRFD + MediaPipe FaceLandmarker once ───────────────────────────
   useEffect(() => {
     const det = new SCRFDDetector();
     detectorRef.current = det;
-    det
-      .load(MODEL_URL)
+
+    const lm = new LandmarkDetector();
+    landmarkDetectorRef.current = lm;
+
+    Promise.all([det.load(MODEL_URL), lm.load(LANDMARK_URL)])
       .then(() => {
         modelLoadedRef.current = true;
         setModelLoaded(true);
       })
-      .catch((err) => console.error("Failed to load SCRFD model:", err));
+      .catch((err) => console.error("Failed to load models:", err));
   }, []);
 
   // ── Poll backend /ready until InsightFace warmup completes ───────────────
@@ -378,10 +412,29 @@ export default function LiveCamera() {
 
     if (!cameraActiveRef.current) return; // camera stopped while awaiting
 
+    // Route each face to the correct liveness mode based on size:
+    //   close (≥ MIN_LIVENESS_PX) → EAR via MediaPipe (blink detection)
+    //   far   (< MIN_LIVENESS_PX) → pixel MAD between frames (motion detection)
+    const earSamples:   (EarSample | null)[]           = [];
+    const facePixels:   (Uint8ClampedArray | null)[]   = [];
+
+    for (const det of detections) {
+      const isClose = det.box.width >= MIN_LIVENESS_PX && det.box.height >= MIN_LIVENESS_PX;
+      if (isClose) {
+        const lm = landmarkDetectorRef.current?.detect(video, det.box);
+        earSamples.push(lm ? { left: computeEAR(lm.left), right: computeEAR(lm.right) } : null);
+        facePixels.push(null);
+      } else {
+        earSamples.push(null);
+        facePixels.push(sampleFacePixels(video, det.box, motionCanvasRef.current));
+      }
+    }
+
+    livenessTrackerRef.current.update(detections.map(d => d.box), earSamples, facePixels);
     latestDetectionsRef.current = detections;
     setFacesNow(detections.length);
 
-    // Draw boxes immediately using cached recognition labels
+    // Draw face boxes + liveness state overlay
     const transform = getObjectFitCoverTransform(video);
     if (!transform) return;
     const { scale, offsetX, offsetY, canvasW, canvasH } = transform;
@@ -393,15 +446,6 @@ export default function LiveCamera() {
     ctx.clearRect(0, 0, canvasW, canvasH);
     drawDetectionBoxes(ctx, detections, lastRecognitionRef.current, scale, offsetX, offsetY);
   }, []);
-
-  // ── Recognition cache constants ───────────────────────────────────────────
-  // A face confirmed with score ≥ CACHE_CONFIRM_THRESH is stored in
-  // confirmedFacesRef and served instantly on subsequent frames without
-  // hitting the backend.  The entry is re-checked after CACHE_TTL_MS ms
-  // or when the face moves more than CACHE_MATCH_DIST_PX pixels.
-  const CACHE_CONFIRM_THRESH = 0.45;   // min score to cache (backend threshold is 0.35)
-  const CACHE_MATCH_DIST_PX  = 100;    // max centre movement (video px) to still match
-  const CACHE_TTL_MS         = 15_000; // re-verify a cached face every 15 s
 
   // ── Recognition loop (InsightFace backend) ────────────────────────────────
   const recognizeFaces = useCallback(async () => {
@@ -423,37 +467,50 @@ export default function LiveCamera() {
     setIsRecognizing(true);
 
     try {
-      const t0  = performance.now();
       const now = Date.now();
 
-      // ── Evict cache entries whose face has left the frame ─────────────────
+      // Evict cache entries whose face has left the frame.
       confirmedFacesRef.current = confirmedFacesRef.current.filter((cf) =>
         detections.some((det) => {
           const dx = (det.box.x + det.box.width  / 2) - cf.cx;
           const dy = (det.box.y + det.box.height / 2) - cf.cy;
-          return Math.sqrt(dx * dx + dy * dy) < CACHE_MATCH_DIST_PX * 1.5;
+          return Math.hypot(dx, dy) < CACHE_MATCH_DIST_PX * 1.5;
         }),
       );
 
-      // ── Split detections: served from cache vs. needs backend ─────────────
-      const toRecognize: ScrfdDetection[]   = [];
-      const cachedResults: RecognitionResult[] = [];
+      const toRecognize:     ScrfdDetection[]       = [];
+      const cachedResults:   RecognitionResult[]    = [];
+      const spoofResults:    RecognitionResult[]    = [];
+      const checkingResults: RecognitionResult[]    = [];
 
       for (const det of detections) {
-        const cx = det.box.x + det.box.width  / 2;
-        const cy = det.box.y + det.box.height / 2;
+        const state = livenessTrackerRef.current.getState(det.box);
 
-        const hit = confirmedFacesRef.current.find((cf) => {
-          const dx = cx - cf.cx;
-          const dy = cy - cf.cy;
-          return (
-            Math.sqrt(dx * dx + dy * dy) < CACHE_MATCH_DIST_PX &&
-            now - cf.confirmedAt < CACHE_TTL_MS
-          );
-        });
+        if (state === "spoof") {
+          spoofResults.push({
+            face_index: -1, student_id: null, student_name: null,
+            score: 0, liveness_failed: true, box: det.box,
+          });
+          continue;
+        }
 
+        if (state === "checking") {
+          checkingResults.push({
+            face_index: -1, student_id: null, student_name: null,
+            score: 0, liveness_checking: true, box: det.box,
+          });
+          continue;
+        }
+
+        // Live — check cache first.
+        const cx  = det.box.x + det.box.width  / 2;
+        const cy  = det.box.y + det.box.height / 2;
+        const hit = confirmedFacesRef.current.find((cf) =>
+          Math.hypot(cx - cf.cx, cy - cf.cy) < CACHE_MATCH_DIST_PX &&
+          now - cf.confirmedAt < CACHE_TTL_MS,
+        );
         if (hit) {
-          hit.cx = cx; // track movement
+          hit.cx = cx;
           hit.cy = cy;
           cachedResults.push({ ...hit.result, box: det.box });
         } else {
@@ -461,20 +518,19 @@ export default function LiveCamera() {
         }
       }
 
-      // All faces already confirmed → update overlay instantly, skip backend
       if (!toRecognize.length) {
-        lastRecognitionRef.current = cachedResults;
+        lastRecognitionRef.current = [...cachedResults, ...spoofResults, ...checkingResults];
         setRecognizedNow(cachedResults.filter((r) => r.student_id !== null).length);
         return;
       }
 
-      // ── Phase 1: draw crops for unrecognised detections synchronously ─────
+      // ── Phase 1: draw crops for live unrecognised detections ─────────────
       const canvases: HTMLCanvasElement[] = [];
       const boxes: RecognitionResult["box"][] = [];
 
       for (const det of toRecognize) {
         const { x, y, width, height } = det.box;
-        const pad = 0.25;
+        const pad = 0.85; // 2.7× face width — matches MiniFASNetV2 training scale
         const cx2 = Math.max(0, Math.round(x - width  * pad));
         const cy2 = Math.max(0, Math.round(y - height * pad));
         const cw  = Math.min(video.videoWidth  - cx2, Math.round(width  * (1 + 2 * pad)));
@@ -491,6 +547,16 @@ export default function LiveCamera() {
 
       if (!canvases.length) return;
 
+      // Show "Checking..." boxes while the backend round-trip is in flight.
+      lastRecognitionRef.current = [
+        ...boxes.map((box) => ({
+          face_index: -1, student_id: null, student_name: null,
+          score: 0, liveness_checking: true, box,
+        } as RecognitionResult)),
+        ...spoofResults,
+        ...checkingResults,
+      ];
+
       // ── Phase 2: encode all canvases to JPEG synchronously ────────────────
       // toDataURL() is synchronous — the main thread never yields so SCRFD
       // can't interrupt between crops (~5 ms total vs ~1600 ms with toBlob).
@@ -502,16 +568,9 @@ export default function LiveCamera() {
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
         return new Blob([bytes], { type: "image/jpeg" });
       });
-      const tCrop = performance.now();
-      console.log(`[timing] crop×${crops.length}: ${(tCrop - t0).toFixed(1)} ms`);
-
       if (!crops.length) return;
 
-      const tReq = performance.now();
       const response = await attendanceApi.markCrops(session.id, crops);
-      const tRes = performance.now();
-      console.log(`[timing] HTTP round-trip: ${(tRes - tReq).toFixed(1)} ms`);
-      console.log(`[timing] total: ${(tRes - t0).toFixed(1)} ms`);
 
       if (!cameraActiveRef.current) return;
 
@@ -520,37 +579,24 @@ export default function LiveCamera() {
         box: boxes[r.face_index] ?? boxes[0],
       }));
 
-      // ── Update confirmed-faces cache with high-confidence results ──────────
+      // Store high-confidence matches in the cache.
       for (const r of newResults) {
-        const cached = r.student_id !== null && r.score >= CACHE_CONFIRM_THRESH;
-        console.log(
-          `[recognition] face ${r.face_index} ` +
-          `(${Math.round(r.box.width)}×${Math.round(r.box.height)}px): ` +
-          `${r.student_name ?? "Unknown"} | score=${r.score.toFixed(3)}` +
-          (cached ? " → cached ✓" : ""),
-        );
-
-        if (cached) {
+        if (r.student_id !== null && r.score >= CACHE_CONFIRM_THRESH) {
           const cx = r.box.x + r.box.width  / 2;
           const cy = r.box.y + r.box.height / 2;
-          const existing = confirmedFacesRef.current.find((cf) => {
-            const dx = cx - cf.cx;
-            const dy = cy - cf.cy;
-            return Math.sqrt(dx * dx + dy * dy) < CACHE_MATCH_DIST_PX;
-          });
+          const existing = confirmedFacesRef.current.find((cf) =>
+            Math.hypot(cx - cf.cx, cy - cf.cy) < CACHE_MATCH_DIST_PX,
+          );
           if (existing) {
-            existing.cx          = cx;
-            existing.cy          = cy;
-            existing.result      = r;
-            existing.confirmedAt = now;
+            existing.cx = cx; existing.cy = cy;
+            existing.result = r; existing.confirmedAt = now;
           } else {
             confirmedFacesRef.current.push({ cx, cy, result: r, confirmedAt: now });
           }
         }
       }
 
-      // Merge cached + new results for the overlay
-      const allResults = [...cachedResults, ...newResults];
+      const allResults = [...cachedResults, ...newResults, ...spoofResults, ...checkingResults];
       lastRecognitionRef.current = allResults;
       setRecognizedNow(allResults.filter((r) => r.student_id !== null).length);
 
@@ -646,6 +692,7 @@ export default function LiveCamera() {
       latestDetectionsRef.current = [];
       lastRecognitionRef.current  = [];
       confirmedFacesRef.current   = [];
+      livenessTrackerRef.current.reset();
 
       setIsCameraActive(false);
       setIsRecognizing(false);

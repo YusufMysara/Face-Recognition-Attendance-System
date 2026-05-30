@@ -18,13 +18,6 @@ settings = get_settings()
 _log = logging.getLogger(__name__)
 
 # ── InsightFace singletons ───────────────────────────────────────────────────
-# Two instances:
-#   _face_app       – full-frame pipeline, det_size=(640,640)
-#                     used for photo upload / embedding extraction.
-#   _face_app_crops – crops pipeline, det_size=(320,320)
-#                     used for /mark-crops: input images are already tight
-#                     face crops (~150-300 px), so a smaller det tensor is
-#                     sufficient and roughly 4× faster than 640×640.
 _face_app: Optional[FaceAnalysis] = None
 _face_app_crops: Optional[FaceAnalysis] = None
 
@@ -34,10 +27,6 @@ def get_face_app() -> FaceAnalysis:
     if _face_app is None:
         _face_app = FaceAnalysis(
             name="buffalo_s",
-            # Load only what we need: detection (SCRFD) + recognition (ArcFace).
-            # Skipping landmark_3d_68, landmark_2d_106, and genderage cuts the
-            # per-face model pipeline from 5 models to 2, eliminating ~3 cold-start
-            # penalties and roughly halving inference time per detected face.
             allowed_modules=["detection", "recognition"],
             providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
         )
@@ -54,31 +43,16 @@ def get_face_app_crops() -> FaceAnalysis:
             allowed_modules=["detection", "recognition"],
             providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
         )
-        # 320×320 is plenty for face crops; 4× fewer pixels → ~2–3× faster
         _face_app_crops.prepare(ctx_id=0, det_size=(320, 320))
     return _face_app_crops
 
 
 # ── ONNX keepalive ────────────────────────────────────────────────────────────
-# On Windows, ONNX Runtime's OpenMP thread pool parks idle threads after a
-# very short timeout (can be < 10 ms).  Re-waking parked threads costs ~7 s
-# for the crops pipeline, turning every second crop in the same request into a
-# cold-start.  A background heartbeat inference every 400 ms prevents parking.
-
 _keepalive_thread: Optional[threading.Thread] = None
 
 
 def start_face_keepalive() -> None:
-    """Start (once) the background thread that keeps ONNX threads warm.
-
-    Previous black-dummy approach: SCRFD runs (~30 ms) but ArcFace is never
-    called (no faces in a black image) → ArcFace weights stay cold → every
-    real request pays ~870 ms to reload ArcFace into CPU cache.
-
-    This version calls SCRFD via the full pipeline (black dummy, ~30 ms) AND
-    calls ArcFace's get_feat() directly with a 112×112 dummy (~30 ms).
-    Both models stay cache-hot.  Total duty cycle: ~60 ms / 400 ms = 15%.
-    """
+    """Keep ONNX thread pool warm to avoid 7-second re-wake penalty on Windows."""
     global _keepalive_thread
     if _keepalive_thread is not None:
         return
@@ -87,8 +61,6 @@ def start_face_keepalive() -> None:
     _arcface_dummy = np.zeros((112, 112, 3), dtype=np.uint8)
 
     def _heartbeat() -> None:
-        # Grab a reference to the recognition model once the crops pipeline
-        # is initialised (it should already be ready after warmup).
         rec_model = None
         app = get_face_app_crops()
         for taskname, model in getattr(app, "models", {}).items():
@@ -98,13 +70,11 @@ def start_face_keepalive() -> None:
                 break
 
         while True:
-            time.sleep(0.4)  # 400 ms — well below the thread-park threshold
-            # Keep SCRFD warm
+            time.sleep(0.4)
             try:
                 get_face_app_crops().get(_scrfd_dummy, max_num=1)
             except Exception:
                 pass
-            # Keep ArcFace warm (direct call avoids running SCRFD a second time)
             if rec_model is not None:
                 try:
                     rec_model.get_feat([_arcface_dummy])
@@ -141,22 +111,13 @@ def bytes_to_bgr(data: bytes) -> np.ndarray:
     return img
 
 
-# ── Public API ───────────────────────────────────────────────────────────────
-
 def extract_face_embedding(file: UploadFile) -> tuple[str, str]:
     """
-    Save the uploaded photo, detect the largest face with InsightFace,
-    and return (saved_path, json_embedding_string).
+    Save the uploaded photo, detect the largest face, return (path, embedding_json).
     Embedding is a 512-dim ArcFace vector (L2-normalised).
-
-    Security: the original filename is NEVER used on disk.  A UUID is generated
-    for every upload so path-traversal attacks (e.g. filename='../../app/main.py')
-    cannot overwrite application files.
     """
     upload_dir = ensure_upload_dir()
 
-    # Keep only the file extension (e.g. ".jpg") from the original name;
-    # discard the rest entirely.  Fall back to ".jpg" for unknown extensions.
     _ALLOWED_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
     raw_suffix = Path(file.filename or "").suffix.lower()
     suffix = raw_suffix if raw_suffix in _ALLOWED_EXTS else ".jpg"
@@ -174,8 +135,7 @@ def extract_face_embedding(file: UploadFile) -> tuple[str, str]:
         os.remove(file_path)
         raise HTTPException(status_code=400, detail="No face detected in photo")
 
-    # Pick the largest (most prominent) face in case multiple are present
     face = max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
-    embedding: np.ndarray = face.embedding  # shape (512,), L2-normalised
+    embedding: np.ndarray = face.embedding
 
     return str(file_path), json.dumps(embedding.tolist())
