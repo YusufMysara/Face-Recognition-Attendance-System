@@ -44,7 +44,7 @@ const MIN_LIVENESS_PX    = 80;
 /** Canvas size for face pixel sampling (motion mode). */
 const MOTION_SAMPLE_SIZE = 32;
 /** Min score to cache a recognised face. */
-const CACHE_CONFIRM_THRESH = 0.45;
+const CACHE_CONFIRM_THRESH = 0.35;
 /** Max face centre movement (px) to still match a cached entry. */
 const CACHE_MATCH_DIST_PX  = 100;
 /** Re-verify a cached face after this many ms. */
