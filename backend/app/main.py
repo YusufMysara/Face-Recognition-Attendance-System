@@ -35,6 +35,7 @@ def _warmup():
     each recognition model so ArcFace is fully compiled and cache-hot too.
     """
     global _models_ready
+    import time
     import numpy as np
     from app.utils.face import get_face_app, get_rec_session
 
@@ -64,19 +65,28 @@ def _warmup():
             except Exception as exc:
                 logger.warning("  InsightFace ArcFace warmup skipped: %s", exc)
 
-    session    = get_rec_session()          # loads w600k_mbf.onnx from disk
+    # Load the ArcFace ONNX session and run enough passes to fully initialise
+    # the Windows ONNX Runtime thread pool.  3 back-to-back passes are not
+    # enough — the pool initialises lazily and the first real inference still
+    # blocks for ~7-15 s.  Running batches with short pauses forces the pool
+    # to fully wake up before any user request arrives.
+    session    = get_rec_session()
     input_name = session.get_inputs()[0].name
     dummy_blob = np.zeros((1, 3, 112, 112), dtype=np.float32)
-    for _ in range(3):
-        session.run(None, {input_name: dummy_blob})
-    logger.info("  ✓ ArcFace ONNX session warmed (%s)", session.get_inputs()[0].name)
+    for batch in range(5):
+        for _ in range(4):
+            session.run(None, {input_name: dummy_blob})
+        time.sleep(0.3)
+    logger.info("  ✓ ArcFace ONNX session warmed (20 passes, %s)", input_name)
+
+    # Start keepalive BEFORE marking ready so it is already pumping by the
+    # time the frontend unlocks and the first recognition request arrives.
+    from app.utils.face import start_face_keepalive
+    start_face_keepalive()
+    logger.info("ONNX keepalive started.")
 
     _models_ready = True
     logger.info("InsightFace warm-up complete — all models ready.")
-
-    from app.utils.face import start_face_keepalive
-    start_face_keepalive()
-    logger.info("ONNX keepalive started (SCRFD + ArcFace heartbeat every 400 ms).")
 
 
 @asynccontextmanager
