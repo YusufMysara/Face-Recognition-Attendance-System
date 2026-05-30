@@ -513,6 +513,11 @@ export default function LiveCamera() {
           hit.cx = cx;
           hit.cy = cy;
           cachedResults.push({ ...hit.result, box: det.box });
+          console.log(
+            `[recognition] cache hit → ${hit.result.student_name ?? "Unknown"}` +
+            ` | score=${hit.result.score.toFixed(3)}` +
+            ` | age=${((now - hit.confirmedAt) / 1000).toFixed(1)}s`,
+          );
         } else {
           toRecognize.push(det);
         }
@@ -582,6 +587,13 @@ export default function LiveCamera() {
         ...r,
         box: boxes[r.face_index] ?? boxes[0],
       }));
+      newResults.forEach((r) =>
+        console.log(
+          `[recognition] backend  → ${r.student_name ?? "Unknown"}` +
+          ` | score=${r.score.toFixed(3)}` +
+          (r.student_id !== null ? " ✓" : " ✗"),
+        ),
+      );
 
       // Store high-confidence matches in the cache.
       for (const r of newResults) {
