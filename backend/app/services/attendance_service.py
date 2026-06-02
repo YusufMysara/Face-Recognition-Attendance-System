@@ -1,8 +1,10 @@
 """Business logic for attendance — face recognition orchestration and record management."""
 import json
 import logging
+import os
 import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -168,78 +170,56 @@ class AttendanceService:
                 status_code=400, detail="No valid face embeddings registered."
             )
 
-        results: List[Dict[str, Any]] = []
-        t_start = time.perf_counter()
-
+        # ── Phase 1: decode all files (sequential, fast I/O) ─────────────────
+        decoded: List[tuple] = []
         for idx, file in enumerate(files):
-            t_crop = time.perf_counter()
             file.file.seek(0)
             try:
                 img = bytes_to_bgr(file.file.read())
+                kps = kps_list[idx] if kps_list and idx < len(kps_list) else None
+                decoded.append((idx, img, kps))
             except Exception:
-                results.append(
-                    {
-                        "face_index": idx,
-                        "student_id": None,
-                        "student_name": None,
-                        "score": 0.0,
-                    }
-                )
-                continue
+                decoded.append((idx, None, None))
 
-            kps = kps_list[idx] if kps_list and idx < len(kps_list) else None
-            embedding = embedding_from_crop(img, kps)
-            t_arcface = time.perf_counter()
-            logger.info(
-                "[timing] crop %d: ArcFace=%d ms",
-                idx,
-                int(1000 * (t_arcface - t_crop)),
-            )
+        # ── Phase 2: embed + match all crops in parallel ──────────────────────
+        # ort.InferenceSession.run() is thread-safe and releases the GIL, so
+        # multiple crops can be processed concurrently with no locking needed.
+        def _process(item: tuple) -> Dict[str, Any]:
+            idx, img, kps = item
+            if img is None:
+                return {"face_index": idx, "student_id": None, "student_name": None, "score": 0.0}
 
-            if embedding is None:
-                results.append(
-                    {
-                        "face_index": idx,
-                        "student_id": None,
-                        "student_name": None,
-                        "score": 0.0,
-                    }
-                )
-                continue
+            t = time.perf_counter()
+            emb = embedding_from_crop(img, kps)
+            logger.info("[timing] crop %d: ArcFace=%d ms", idx, int(1000 * (time.perf_counter() - t)))
 
-            norm = np.linalg.norm(embedding)
+            if emb is None:
+                return {"face_index": idx, "student_id": None, "student_name": None, "score": 0.0}
+
+            norm = np.linalg.norm(emb)
             if norm > 0:
-                embedding = embedding / norm
+                emb = emb / norm
 
-            best_student, best_score = self._best_match(embedding, known)
+            student, score = self._best_match(emb, known)
+            matched = bool(student and score >= _SIMILARITY_THRESHOLD)
             logger.info(
-                "[recognition] crop %d: best_match=%s score=%.3f threshold=%.2f → %s",
-                idx,
-                best_student.name if best_student else "none",
-                best_score,
-                _SIMILARITY_THRESHOLD,
-                "MATCH" if best_student and best_score >= _SIMILARITY_THRESHOLD else "NO MATCH",
+                "[recognition] crop %d: best_match=%s score=%.3f → %s",
+                idx, student.name if student else "none", score,
+                "MATCH" if matched else "NO MATCH",
             )
+            if matched:
+                return {"face_index": idx, "student_id": student.id, "student_name": student.name, "score": round(score, 3)}
+            return {"face_index": idx, "student_id": None, "student_name": None, "score": round(score, 3)}
 
-            if best_student and best_score >= _SIMILARITY_THRESHOLD:
-                self.repo.upsert_present(session_id, best_student.id)
-                results.append(
-                    {
-                        "face_index": idx,
-                        "student_id": best_student.id,
-                        "student_name": best_student.name,
-                        "score": round(best_score, 3),
-                    }
-                )
-            else:
-                results.append(
-                    {
-                        "face_index": idx,
-                        "student_id": None,
-                        "student_name": None,
-                        "score": round(best_score, 3),
-                    }
-                )
+        t_start = time.perf_counter()
+        workers = min(len(decoded), os.cpu_count() or 4)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            crop_results = list(pool.map(_process, decoded))
+
+        # ── Phase 3: DB writes (sequential — SQLAlchemy session is not thread-safe)
+        for r in crop_results:
+            if r["student_id"] is not None:
+                self.repo.upsert_present(session_id, r["student_id"])
 
         t_end = time.perf_counter()
         logger.info(
@@ -249,7 +229,7 @@ class AttendanceService:
             int(1000 * (t_end - t_start) / max(len(files), 1)),
         )
         self.db.commit()
-        return {"recognized": results}
+        return {"recognized": crop_results}
 
     # ── attendance management ─────────────────────────────────────────────────
 

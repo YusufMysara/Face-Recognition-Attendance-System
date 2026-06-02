@@ -18,15 +18,15 @@
 
 // ── EAR (close face) constants ────────────────────────────────────────────────
 /** Frames to build the open-eye EAR baseline before blink checking starts. */
-const BASELINE_FRAMES  = 15;
+const BASELINE_FRAMES  = 5;
 /** Threshold = open-eye baseline × this ratio (universal across people). */
-const BLINK_RATIO      = 0.85;
+const BLINK_RATIO      = 0.90;
 /** Frames before an EAR-mode spoof verdict. */
-const EAR_HISTORY_SIZE = 60;
+const EAR_HISTORY_SIZE = 35;
 /** Minimum consecutive frames with EAR below threshold to count as a blink. */
 const BLINK_MIN_FRAMES = 1;
 /** A blink can't last longer than this (hand/shadow over face). */
-const BLINK_MAX_FRAMES = 8;
+const BLINK_MAX_FRAMES = 5;
 
 // ── Motion (far face) constants ───────────────────────────────────────────────
 /** Mean absolute luminance difference (0–255) between frames to count as motion. */
