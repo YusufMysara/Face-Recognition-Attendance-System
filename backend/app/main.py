@@ -93,6 +93,20 @@ def _warmup():
     else:
         logger.info("  ✓ ArcFace self-test passed (512-dim embedding confirmed)")
 
+    # ── Phase 3: warm the crop executor threads ───────────────────────────────
+    # _CROP_EXECUTOR threads are pre-created but have never run ONNX inference.
+    # Each thread has its own per-thread ONNX initialisation cost on Windows.
+    # Submit enough tasks to saturate all workers so every thread runs at least
+    # once before the first real request arrives.
+    from app.services.attendance_service import _CROP_EXECUTOR
+    n_workers = _CROP_EXECUTOR._max_workers
+    logger.info("Warming crop executor threads (%d workers)…", n_workers)
+    futures = [_CROP_EXECUTOR.submit(embedding_from_crop, dummy_img, dummy_kps)
+               for _ in range(n_workers * 2)]
+    for f in futures:
+        f.result()
+    logger.info("  ✓ all crop executor threads warmed")
+
     # Start keepalive BEFORE marking ready so it is already pumping by the
     # time the frontend unlocks and the first recognition request arrives.
     from app.utils.face import start_face_keepalive

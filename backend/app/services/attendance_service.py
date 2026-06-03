@@ -7,6 +7,11 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Tuple
 
+# Persistent executor — created once at import time so threads are already alive
+# when the first request arrives.  Creating a new ThreadPoolExecutor per request
+# costs ~500 ms on Windows due to thread-spawn overhead.
+_CROP_EXECUTOR = ThreadPoolExecutor(max_workers=os.cpu_count() or 4)
+
 import numpy as np
 from fastapi import HTTPException, UploadFile
 from sqlalchemy.orm import Session
@@ -212,9 +217,11 @@ class AttendanceService:
             return {"face_index": idx, "student_id": None, "student_name": None, "score": round(score, 3)}
 
         t_start = time.perf_counter()
-        workers = min(len(decoded), os.cpu_count() or 4)
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            crop_results = list(pool.map(_process, decoded))
+        if len(decoded) == 1:
+            # Single crop — run directly in the calling thread, no executor overhead.
+            crop_results = [_process(decoded[0])]
+        else:
+            crop_results = list(_CROP_EXECUTOR.map(_process, decoded))
 
         # ── Phase 3: DB writes (sequential — SQLAlchemy session is not thread-safe)
         for r in crop_results:
