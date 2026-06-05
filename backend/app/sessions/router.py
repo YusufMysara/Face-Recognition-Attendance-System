@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.auth.dependencies import get_current_user, require_role
 from app.database import get_db
 from app.models import User
-from app.schemas.session import SessionCreate, SessionResponse
+from app.schemas.session import SessionCreate, SessionResponse, SessionWithAttendanceResponse
 from app.services.session_service import SessionService
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
@@ -48,7 +48,7 @@ def submit_session(
     return SessionService(db).submit(session_id, current_user)
 
 
-@router.get("/course/{course_id}", response_model=List[SessionResponse])
+@router.get("/course/{course_id}", response_model=List[SessionWithAttendanceResponse])
 def list_sessions_for_course(
     course_id: int,
     current_user: User = Depends(get_current_user),

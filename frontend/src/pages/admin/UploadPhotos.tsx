@@ -18,6 +18,7 @@ interface Student {
   name: string;
   email: string;
   group?: string;
+  photo_path?: string;
 }
 
 interface PhotoFile {
@@ -43,8 +44,9 @@ export default function UploadPhotos() {
       setLoading(true);
       setError(null);
       const response = await usersApi.list();
-      // Filter to only show students
-      const studentsOnly = response.filter(user => user.role === "student");
+      const studentsOnly = response
+        .filter(user => user.role === "student")
+        .sort((a, b) => (a.photo_path ? 1 : -1) - (b.photo_path ? 1 : -1));
       setStudents(studentsOnly);
     } catch (err) {
       setError(handleApiError(err));
@@ -183,11 +185,22 @@ export default function UploadPhotos() {
             <SelectContent>
               {students.map((student) => (
                 <SelectItem key={student.id} value={String(student.id)}>
-                  {student.name} ({student.email}) - Group {student.group || 'N/A'}
+                  <span className="flex items-center gap-2">
+                    <span className={student.photo_path ? "text-muted-foreground" : ""}>
+                      {student.name} — Group {student.group || "N/A"}
+                    </span>
+                    {student.photo_path
+                      ? <span className="text-xs text-green-600 font-medium">✓ has photo</span>
+                      : <span className="text-xs text-amber-600 font-medium">no photo</span>
+                    }
+                  </span>
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
+          <p className="text-xs text-muted-foreground">
+            {students.filter(s => !s.photo_path).length} of {students.length} students still need a photo
+          </p>
         </div>
       </Card>
 

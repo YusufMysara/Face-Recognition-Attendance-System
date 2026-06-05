@@ -11,7 +11,7 @@ def main() -> None:
             print("Admin already exists (admin@example.com)")
             return
         admin = User(
-            name="Super Admin",
+            name="Admin",
             email="admin@example.com",
             role="admin",
             password_hash=get_password_hash("Admin123!"),

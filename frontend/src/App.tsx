@@ -23,7 +23,6 @@ import TeacherDashboard from "./pages/teacher/TeacherDashboard";
 import Courses from "./pages/teacher/Courses";
 import TeacherCourseDetails from "./pages/teacher/CourseDetails";
 import LiveCamera from "./pages/teacher/LiveCamera";
-import SessionReview from "./pages/teacher/SessionReview";
 import SessionDetails from "./pages/teacher/SessionDetails";
 import AttendanceLog from "./pages/teacher/AttendanceLog";
 import Reports from "./pages/teacher/Reports";
@@ -142,16 +141,6 @@ const App = () => (
               <ProtectedRoute roles={["teacher"]}>
                 <DashboardLayout role="teacher">
                   <LiveCamera />
-                </DashboardLayout>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/teacher/session/:sessionId/review"
-            element={
-              <ProtectedRoute roles={["teacher"]}>
-                <DashboardLayout role="teacher">
-                  <SessionReview />
                 </DashboardLayout>
               </ProtectedRoute>
             }

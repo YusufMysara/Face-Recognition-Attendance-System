@@ -6,11 +6,11 @@ are replaced with MagicMock objects.  No database, no HTTP server required.
 Covered scenarios
 ─────────────────
 create_user  – duplicate email, admin-without-password, default password for students
-delete_user  – super-admin protection, same-role protection, self-delete guard, cascades
-update_user  – cross-admin edit guard, super-admin field guards, duplicate-email check
+delete_user  – self-delete guard, cascades
+update_user  – duplicate-email check
 change_password – wrong current password
 upload_student_photo – role guard, one-photo-only guard
-reset_password – regular admin cannot reset another admin's password
+reset_password – successful reset
 """
 from unittest.mock import MagicMock, patch
 
@@ -40,10 +40,6 @@ def _user(
     u.photo_path = photo_path
     u.password_changed = password_changed
     return u
-
-
-def _super_admin():
-    return _user(id=999, name="Super Admin", email="admin@example.com", role="admin")
 
 
 def _regular_admin():
@@ -77,7 +73,7 @@ class TestCreateUser:
 
         payload = MagicMock(email="new@example.com", password=None, role="admin")
         with pytest.raises(HTTPException) as exc:
-            svc.create_user(payload, _super_admin())
+            svc.create_user(payload, _regular_admin())
 
         assert exc.value.status_code == 400
         assert "Password is required" in exc.value.detail
@@ -107,47 +103,25 @@ class TestDeleteUser:
         svc.repo.get_by_id.return_value = None
 
         with pytest.raises(HTTPException) as exc:
-            svc.delete_user(99, _super_admin())
+            svc.delete_user(99, _regular_admin())
         assert exc.value.status_code == 404
 
-    def test_super_admin_cannot_be_deleted(self):
-        svc = _make_service()
-        target = _user(email="admin@example.com", name="Super Admin", role="admin")
-        svc.repo.get_by_id.return_value = target
-
-        with pytest.raises(HTTPException) as exc:
-            svc.delete_user(target.id, _super_admin())
-        assert exc.value.status_code == 403
-        assert "Super Admin account cannot be deleted" in exc.value.detail
-
-    def test_regular_admin_cannot_delete_another_admin(self):
-        svc = _make_service()
-        target = _user(id=5, role="admin", email="other@example.com")
-        svc.repo.get_by_id.return_value = target
-
-        with pytest.raises(HTTPException) as exc:
-            svc.delete_user(target.id, _regular_admin())
-        assert exc.value.status_code == 403
-
-    def test_regular_admin_cannot_delete_own_account(self):
-        """A regular admin trying to delete themselves hits the admin-role guard first
-        (regular admins cannot delete any admin account, including their own)."""
+    def test_admin_cannot_delete_own_account(self):
         svc = _make_service()
         admin = _regular_admin()
-        svc.repo.get_by_id.return_value = admin   # deleting themselves
+        svc.repo.get_by_id.return_value = admin
 
         with pytest.raises(HTTPException) as exc:
             svc.delete_user(admin.id, admin)
         assert exc.value.status_code == 403
-        # The "cannot delete admin accounts" check fires before the self-delete check.
-        assert "admin accounts" in exc.value.detail
+        assert "cannot delete your own account" in exc.value.detail
 
     def test_delete_student_cascades_attendance_and_enrollments(self):
         svc = _make_service()
         student = _user(id=7, role="student")
         svc.repo.get_by_id.return_value = student
 
-        svc.delete_user(student.id, _super_admin())
+        svc.delete_user(student.id, _regular_admin())
 
         svc.repo.delete_attendance_by_student.assert_called_once_with(7)
         svc.repo.delete_enrollments_by_student.assert_called_once_with(7)
@@ -159,7 +133,7 @@ class TestDeleteUser:
         svc.repo.get_by_id.return_value = teacher
         svc.repo.get_session_ids_for_teacher.return_value = [10, 11]
 
-        svc.delete_user(teacher.id, _super_admin())
+        svc.delete_user(teacher.id, _regular_admin())
 
         svc.repo.delete_attendance_by_sessions.assert_called_once_with([10, 11])
         svc.repo.delete_sessions_by_teacher.assert_called_once_with(8)
@@ -178,31 +152,6 @@ class TestUpdateUser:
             svc.update_user(99, MagicMock(), _regular_admin())
         assert exc.value.status_code == 404
 
-    def test_regular_admin_cannot_edit_another_admin(self):
-        svc = _make_service()
-        target = _user(id=5, role="admin", email="other@example.com")
-        svc.repo.get_by_id.return_value = target
-
-        payload = MagicMock(
-            name="New Name", email=None, password=None, group=None, role=None
-        )
-        with pytest.raises(HTTPException) as exc:
-            svc.update_user(target.id, payload, _regular_admin())
-        assert exc.value.status_code == 403
-
-    def test_cannot_change_super_admin_role(self):
-        svc = _make_service()
-        target = _user(email="admin@example.com", name="Super Admin", role="admin")
-        svc.repo.get_by_id.return_value = target
-
-        payload = MagicMock(
-            name=None, email=None, password=None, group=None, role="student"
-        )
-        with pytest.raises(HTTPException) as exc:
-            svc.update_user(target.id, payload, _super_admin())
-        assert exc.value.status_code == 403
-        assert "role cannot be changed" in exc.value.detail
-
     def test_email_already_in_use_raises_400(self):
         svc = _make_service()
         target = _user(id=3, role="student", email="old@example.com")
@@ -213,7 +162,7 @@ class TestUpdateUser:
             name=None, email="taken@example.com", password=None, group=None, role=None
         )
         with pytest.raises(HTTPException) as exc:
-            svc.update_user(target.id, payload, _super_admin())
+            svc.update_user(target.id, payload, _regular_admin())
         assert exc.value.status_code == 400
         assert "Email already in use" in exc.value.detail
 
@@ -269,22 +218,16 @@ class TestUploadStudentPhoto:
 # ── reset_password ────────────────────────────────────────────────────────────
 
 class TestResetPassword:
-    def test_regular_admin_cannot_reset_another_admins_password(self):
+    def test_admin_can_reset_any_user_password(self):
         svc = _make_service()
-        target = _user(id=5, role="admin", email="other_admin@example.com")
+        target = _user(id=5, role="teacher", email="teacher@example.com")
         svc.repo.get_by_id.return_value = target
+        svc.repo.save.return_value = target
 
         payload = MagicMock(user_id=5, new_password="NewPass1!")
-        with pytest.raises(HTTPException) as exc:
-            svc.reset_password(payload, _regular_admin())
-        assert exc.value.status_code == 403
+        with patch("app.services.user_service.validate_password_strength"), \
+             patch("app.services.user_service.get_password_hash", return_value="new_hash"):
+            result = svc.reset_password(payload, _regular_admin())
 
-    def test_regular_admin_cannot_reset_super_admin_password(self):
-        svc = _make_service()
-        target = _user(id=999, email="admin@example.com", name="Super Admin", role="admin")
-        svc.repo.get_by_id.return_value = target
-
-        payload = MagicMock(user_id=999, new_password="NewPass1!")
-        with pytest.raises(HTTPException) as exc:
-            svc.reset_password(payload, _regular_admin())
-        assert exc.value.status_code == 403
+        assert result == {"detail": "Password reset"}
+        assert target.password_hash == "new_hash"

@@ -1,6 +1,7 @@
 """Pure data-access for the Session domain."""
-from typing import List, Optional, Set
+from typing import List, Optional, Set, Tuple
 
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from app.models import Attendance, Course, Session as SessionModel, StudentCourse
@@ -22,6 +23,28 @@ class SessionRepository:
     def get_for_course(self, course_id: int) -> List[SessionModel]:
         return (
             self.db.query(SessionModel)
+            .filter(SessionModel.course_id == course_id)
+            .order_by(SessionModel.started_at.desc())
+            .all()
+        )
+
+    def get_for_course_with_counts(self, course_id: int) -> List[Tuple]:
+        counts_sq = (
+            self.db.query(
+                Attendance.session_id,
+                func.count(Attendance.id).label("total"),
+                func.sum(case((Attendance.status == "present", 1), else_=0)).label("present"),
+            )
+            .group_by(Attendance.session_id)
+            .subquery()
+        )
+        return (
+            self.db.query(
+                SessionModel,
+                func.coalesce(counts_sq.c.present, 0).label("attendance_count"),
+                func.coalesce(counts_sq.c.total, 0).label("total_students"),
+            )
+            .outerjoin(counts_sq, SessionModel.id == counts_sq.c.session_id)
             .filter(SessionModel.course_id == course_id)
             .order_by(SessionModel.started_at.desc())
             .all()

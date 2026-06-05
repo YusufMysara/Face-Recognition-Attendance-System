@@ -478,7 +478,7 @@ export const attendanceApi = {
   },
 
   getAll: async () => {
-    const response = await fetchWithAuth("/attendance/all");
+    const response = await fetchWithAuth("/attendance/all?limit=10000");
     if (!response.ok) throw new Error("Failed to fetch all attendance records");
     return response.json();
   },

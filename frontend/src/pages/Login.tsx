@@ -98,16 +98,6 @@ export default function Login() {
             />
           </div>
 
-          <div className="flex items-center justify-between text-sm">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" className="rounded" />
-              <span className="text-muted-foreground">Remember me</span>
-            </label>
-            <a href="#" className="text-primary hover:underline">
-              Forgot password?
-            </a>
-          </div>
-
           <Button type="submit" className="w-full rounded-lg" size="lg" disabled={loading}>
             {loading ? "Signing in..." : "Sign In"}
           </Button>

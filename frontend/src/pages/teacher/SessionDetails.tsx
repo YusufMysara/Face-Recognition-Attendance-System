@@ -4,7 +4,8 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Calendar, Users, CheckCircle2, XCircle, Loader2, RotateCcw, Play, Filter } from "lucide-react";
+import { Calendar, Users, CheckCircle2, XCircle, Loader2, RotateCcw, Play, Filter, ArrowLeft } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { attendanceApi, coursesApi, sessionsApi, handleApiError } from "@/lib/api";
 import { toast } from "sonner";
 
@@ -241,9 +242,14 @@ export default function SessionDetails() {
 
   return (
     <div className="content-container">
-      <div className="mb-6">
-        <h1 className="text-3xl font-bold mb-2">Session Details</h1>
-        <p className="text-muted-foreground">View attendance for this session</p>
+      <div className="flex items-center gap-4 mb-6">
+        <Button variant="ghost" size="icon" onClick={() => navigate(`/teacher/course/${session.course_id}`)}>
+          <ArrowLeft className="w-5 h-5" />
+        </Button>
+        <div>
+          <h1 className="text-3xl font-bold mb-2">Session Details</h1>
+          <p className="text-muted-foreground">View attendance for this session</p>
+        </div>
       </div>
 
       <div className="grid md:grid-cols-3 gap-6 mb-6">
@@ -343,16 +349,17 @@ export default function SessionDetails() {
             {availableGroups.length > 0 && (
               <div className="flex items-center gap-2">
                 <Filter className="w-4 h-4 text-muted-foreground" />
-                <select
-                  value={selectedGroup}
-                  onChange={(e) => setSelectedGroup(e.target.value)}
-                  className="px-3 py-1 border border-input rounded-md bg-background text-sm"
-                >
-                  <option value="all">All Groups</option>
-                  {availableGroups.map(group => (
-                    <option key={group} value={group}>{group}</option>
-                  ))}
-                </select>
+                <Select value={selectedGroup} onValueChange={setSelectedGroup}>
+                  <SelectTrigger className="w-36">
+                    <SelectValue placeholder="All Groups" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Groups</SelectItem>
+                    {availableGroups.map(group => (
+                      <SelectItem key={group} value={group}>{group}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             )}
             {session.status !== "submitted" && (

@@ -3,7 +3,15 @@ import { useParams, useNavigate } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { DataTable, Column } from "@/components/shared/DataTable";
-import { ArrowLeft, Plus, Trash2, Loader2 } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Loader2, Users } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { AddStudentsModal } from "@/components/modals/AddStudentsModal";
 import { ConfirmationModal } from "@/components/modals/ConfirmationModal";
 import { coursesApi, usersApi, handleApiError } from "@/lib/api";
@@ -38,6 +46,9 @@ export default function CourseDetails() {
   const [removeModalOpen, setRemoveModalOpen] = useState(false);
   const [studentToRemove, setStudentToRemove] = useState<Student | null>(null);
   const [assigningStudents, setAssigningStudents] = useState(false);
+  const [enrollByGroupOpen, setEnrollByGroupOpen] = useState(false);
+  const [selectedGroup, setSelectedGroup] = useState<string>("");
+  const [enrollingGroup, setEnrollingGroup] = useState(false);
 
   // Load course and student data on mount
   useEffect(() => {
@@ -120,25 +131,44 @@ export default function CourseDetails() {
 
   const handleAddStudents = async (studentIds: string[]) => {
     if (!courseId) return;
-
     try {
       setAssigningStudents(true);
       const courseIdNum = parseInt(courseId);
-
-      // Assign each student to the course
-      for (const studentId of studentIds) {
-        await coursesApi.assignStudent(courseIdNum, parseInt(studentId));
-      }
-
+      await Promise.all(studentIds.map(id => coursesApi.assignStudent(courseIdNum, parseInt(id))));
       toast.success(`${studentIds.length} student(s) added to course`);
-
-      // Refresh the data
       await loadCourseData();
       setAddStudentsOpen(false);
     } catch (err) {
       toast.error(handleApiError(err));
     } finally {
       setAssigningStudents(false);
+    }
+  };
+
+  const availableGroups = Array.from(
+    new Set(availableStudents.map(s => s.group).filter(Boolean) as string[])
+  ).sort();
+
+  const handleEnrollByGroup = async () => {
+    if (!courseId || !selectedGroup) return;
+    const groupStudents = availableStudents.filter(s => s.group === selectedGroup);
+    if (groupStudents.length === 0) {
+      toast.info("All students from this group are already enrolled");
+      setEnrollByGroupOpen(false);
+      return;
+    }
+    try {
+      setEnrollingGroup(true);
+      const courseIdNum = parseInt(courseId);
+      await Promise.all(groupStudents.map(s => coursesApi.assignStudent(courseIdNum, s.id)));
+      toast.success(`${groupStudents.length} student(s) from ${selectedGroup} enrolled`);
+      setEnrollByGroupOpen(false);
+      setSelectedGroup("");
+      await loadCourseData();
+    } catch (err) {
+      toast.error(handleApiError(err));
+    } finally {
+      setEnrollingGroup(false);
     }
   };
 
@@ -220,23 +250,36 @@ export default function CourseDetails() {
 
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-2xl font-semibold">Enrolled Students</h2>
-        <Button
-          onClick={() => setAddStudentsOpen(true)}
-          className="rounded-xl"
-          disabled={assigningStudents}
-        >
-          {assigningStudents ? (
-            <>
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              Adding...
-            </>
-          ) : (
-            <>
-              <Plus className="w-4 h-4 mr-2" />
-              Add Students
-            </>
+        <div className="flex gap-2">
+          {availableGroups.length > 0 && (
+            <Button
+              variant="outline"
+              onClick={() => { setSelectedGroup(""); setEnrollByGroupOpen(true); }}
+              className="rounded-xl"
+              disabled={assigningStudents || enrollingGroup}
+            >
+              <Users className="w-4 h-4 mr-2" />
+              Enroll by Group
+            </Button>
           )}
-        </Button>
+          <Button
+            onClick={() => setAddStudentsOpen(true)}
+            className="rounded-xl"
+            disabled={assigningStudents || enrollingGroup}
+          >
+            {assigningStudents ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Adding...
+              </>
+            ) : (
+              <>
+                <Plus className="w-4 h-4 mr-2" />
+                Add Students
+              </>
+            )}
+          </Button>
+        </div>
       </div>
 
       {enrolledStudents.length === 0 ? (
@@ -250,6 +293,42 @@ export default function CourseDetails() {
           searchPlaceholder="Search students..."
         />
       )}
+
+      <Dialog open={enrollByGroupOpen} onOpenChange={setEnrollByGroupOpen}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle>Enroll by Group</DialogTitle>
+          </DialogHeader>
+          <div className="py-4 space-y-3">
+            <p className="text-sm text-muted-foreground">
+              All unenrolled students from the selected group will be added to this course.
+            </p>
+            <Select value={selectedGroup} onValueChange={setSelectedGroup}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select a group" />
+              </SelectTrigger>
+              <SelectContent>
+                {availableGroups.map(g => {
+                  const count = availableStudents.filter(s => s.group === g).length;
+                  return (
+                    <SelectItem key={g} value={g}>
+                      {g} — {count} unenrolled student{count !== 1 ? "s" : ""}
+                    </SelectItem>
+                  );
+                })}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEnrollByGroupOpen(false)} disabled={enrollingGroup}>
+              Cancel
+            </Button>
+            <Button onClick={handleEnrollByGroup} disabled={!selectedGroup || enrollingGroup}>
+              {enrollingGroup ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Enrolling...</> : "Enroll Group"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <AddStudentsModal
         open={addStudentsOpen}

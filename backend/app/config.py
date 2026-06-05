@@ -13,9 +13,6 @@ class Settings(BaseSettings):
     database_url: str = Field(alias="DATABASE_URL")
     upload_dir: str = Field(default="backend/uploads", alias="UPLOAD_DIR")
     cors_allowed_origins: str = Field(default="", alias="CORS_ALLOWED_ORIGINS")
-    # Super-admin identity — override via SUPER_ADMIN_EMAIL env var if needed
-    super_admin_email: str = Field(default="admin@example.com", alias="SUPER_ADMIN_EMAIL")
-    super_admin_name: str = Field(default="Super Admin", alias="SUPER_ADMIN_NAME")
 
 
 @lru_cache

@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Session as SessionModel, User
 from app.repositories.session_repository import SessionRepository
-from app.schemas.session import SessionCreate
+from app.schemas.session import SessionCreate, SessionWithAttendanceResponse
 
 
 class SessionService:
@@ -121,7 +121,7 @@ class SessionService:
 
     def list_for_course(
         self, course_id: int, current_user: User
-    ) -> List[SessionModel]:
+    ) -> List[SessionWithAttendanceResponse]:
         course = self.repo.get_course_by_id(course_id)
         if not course:
             raise HTTPException(status_code=404, detail="Course not found")
@@ -138,4 +138,17 @@ class SessionService:
             )
             if not enrollment:
                 raise HTTPException(status_code=403, detail="Not enrolled")
-        return self.repo.get_for_course(course_id)
+        rows = self.repo.get_for_course_with_counts(course_id)
+        return [
+            SessionWithAttendanceResponse(
+                id=session.id,
+                course_id=session.course_id,
+                teacher_id=session.teacher_id,
+                started_at=session.started_at,
+                ended_at=session.ended_at,
+                status=session.status,
+                attendance_count=attendance_count,
+                total_students=total_students,
+            )
+            for session, attendance_count, total_students in rows
+        ]

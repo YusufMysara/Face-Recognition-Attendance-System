@@ -1,89 +1,97 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { DataTable, Column } from "@/components/shared/DataTable";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Eye, Trash2, Loader2, Download } from "lucide-react";
-import { ConfirmationModal } from "@/components/modals/ConfirmationModal";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { StatsCard } from "@/components/shared/StatsCard";
+import { GraduationCap, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
-import { useNavigate } from "react-router-dom";
-import { coursesApi, sessionsApi, attendanceApi, handleApiError } from "@/lib/api";
+import { coursesApi, attendanceApi, handleApiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 
-interface Session {
+interface Course {
   id: number;
-  course_name: string;
-  started_at: string;
-  status: string;
-  attendance_count?: number;
-  total_students?: number;
+  name: string;
+  teacher_id: number;
+}
+
+interface RawRecord {
+  student_id: number;
+  student_name?: string;
+  status: "present" | "absent";
+}
+
+interface StudentSummary {
+  student_id: number;
+  student_name: string;
+  present: number;
+  total: number;
+  percentage: number;
+}
+
+function statusBadge(pct: number) {
+  if (pct >= 75) return <Badge className="bg-green-100 text-green-800 hover:bg-green-100">Good</Badge>;
+  if (pct >= 50) return <Badge className="bg-yellow-100 text-yellow-800 hover:bg-yellow-100">At Risk</Badge>;
+  return <Badge className="bg-red-100 text-red-800 hover:bg-red-100">Critical</Badge>;
+}
+
+function buildSummaries(records: RawRecord[]): StudentSummary[] {
+  const map = new Map<number, { name: string; present: number; total: number }>();
+  for (const r of records) {
+    if (!map.has(r.student_id)) {
+      map.set(r.student_id, { name: r.student_name || `Student ${r.student_id}`, present: 0, total: 0 });
+    }
+    const entry = map.get(r.student_id)!;
+    entry.total += 1;
+    if (r.status === "present") entry.present += 1;
+  }
+  return Array.from(map.entries())
+    .map(([student_id, { name, present, total }]) => ({
+      student_id,
+      student_name: name,
+      present,
+      total,
+      percentage: total > 0 ? Math.round((present / total) * 100) : 0,
+    }))
+    .sort((a, b) => a.percentage - b.percentage);
+}
+
+async function fetchRecordsForCourse(courseId: number): Promise<RawRecord[]> {
+  const sessions = await coursesApi.getCourseSessions(courseId);
+  const recordsPerSession = await Promise.all(
+    sessions.map((s: { id: number }) =>
+      attendanceApi.getSessionAttendance(s.id).catch(() => [])
+    )
+  );
+  return recordsPerSession.flat() as RawRecord[];
 }
 
 export default function AttendanceLog() {
-  const navigate = useNavigate();
   const { user } = useAuth();
 
-  const [sessions, setSessions] = useState<Session[]>([]);
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [selectedCourseId, setSelectedCourseId] = useState<number | null>(null);
+  const [rawRecords, setRawRecords] = useState<RawRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null);
-  const [deletingSession, setDeletingSession] = useState(false);
 
-  // Load sessions on mount
   useEffect(() => {
-    if (user) {
-      loadSessions();
-    }
+    if (user) loadInitial();
   }, [user]);
 
-  const loadSessions = async () => {
-    if (!user) return;
-
+  const loadInitial = async () => {
     try {
       setLoading(true);
       setError(null);
-
-      // Get all courses taught by this teacher
-      const coursesData = await coursesApi.list();
-      const teacherCourses = coursesData.filter(course => course.teacher_id === user.id);
-
-      // Get all sessions for these courses and enrich with attendance data
-      const allSessions: Session[] = [];
-
-      for (const course of teacherCourses) {
-        const courseSessions = await coursesApi.getCourseSessions(course.id);
-
-        for (const session of courseSessions) {
-          try {
-            const attendanceData = await attendanceApi.getSessionAttendance(session.id);
-            const presentCount = attendanceData.filter(record => record.status === "present").length;
-
-            allSessions.push({
-              id: session.id,
-              course_name: course.name,
-              started_at: session.started_at,
-              status: session.status,
-              attendance_count: presentCount,
-              total_students: attendanceData.length
-            });
-          } catch (err) {
-            // If no attendance data, still show the session
-            allSessions.push({
-              id: session.id,
-              course_name: course.name,
-              started_at: session.started_at,
-              status: session.status,
-              attendance_count: 0,
-              total_students: 0
-            });
-          }
-        }
+      const allCourses = await coursesApi.list();
+      const teacherCourses = (allCourses as Course[]).filter((c) => c.teacher_id === user!.id);
+      setCourses(teacherCourses);
+      if (teacherCourses.length > 0) {
+        const firstId = teacherCourses[0].id;
+        setSelectedCourseId(firstId);
+        const records = await fetchRecordsForCourse(firstId);
+        setRawRecords(records);
       }
-
-      // Sort by date (most recent first)
-      allSessions.sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
-
-      setSessions(allSessions);
     } catch (err) {
       setError(handleApiError(err));
       toast.error(handleApiError(err));
@@ -92,82 +100,32 @@ export default function AttendanceLog() {
     }
   };
 
-  const handleViewSession = (sessionId: number) => {
-    navigate(`/teacher/session/${sessionId}`);
-  };
-
-  const handleDeleteSession = async () => {
-    if (!selectedSessionId) return;
-
+  const handleCourseChange = async (courseId: number) => {
     try {
-      setDeletingSession(true);
-      await sessionsApi.delete(selectedSessionId);
-      setSessions(sessions.filter(s => s.id !== selectedSessionId));
-      toast.success("Session deleted successfully");
+      setSelectedCourseId(courseId);
+      setLoading(true);
+      setError(null);
+      const records = await fetchRecordsForCourse(courseId);
+      setRawRecords(records);
     } catch (err) {
+      setError(handleApiError(err));
       toast.error(handleApiError(err));
     } finally {
-      setDeletingSession(false);
-      setShowDeleteModal(false);
-      setSelectedSessionId(null);
+      setLoading(false);
     }
   };
 
-  const columns: Column<Session>[] = [
-    {
-      header: "Session ID",
-      accessor: (row) => `Session ${row.id}`
-    },
-    { header: "Course Name", accessor: "course_name" },
-    {
-      header: "Date",
-      accessor: (row) => new Date(row.started_at).toLocaleDateString()
-    },
-    {
-      header: "Time",
-      accessor: (row) => new Date(row.started_at).toLocaleTimeString()
-    },
-    {
-      header: "Status",
-      accessor: (row) => (
-        <Badge variant={row.status === "open" ? "default" : "secondary"}>
-          {row.status}
-        </Badge>
-      ),
-    },
-    {
-      header: "Attendance",
-      accessor: (row) =>
-        row.total_students ?
-          `${row.attendance_count || 0}/${row.total_students}` :
-          "No data"
-    },
-    {
-      header: "Actions",
-      accessor: (row) => (
-        <div className="flex gap-2">
-          <Button
-            size="sm"
-            variant="ghost"
-            title="View"
-            onClick={() => handleViewSession(row.id)}
-          >
-            <Eye className="w-4 h-4" />
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            title="Delete"
-            onClick={() => {
-              setSelectedSessionId(row.id);
-              setShowDeleteModal(true);
-            }}
-          >
-            <Trash2 className="w-4 h-4 text-destructive" />
-          </Button>
-        </div>
-      ),
-    },
+  const summaries = useMemo(() => buildSummaries(rawRecords), [rawRecords]);
+
+  const avgPct = summaries.length
+    ? Math.round(summaries.reduce((acc, s) => acc + s.percentage, 0) / summaries.length)
+    : 0;
+
+  const columns: Column<StudentSummary>[] = [
+    { header: "Student Name", accessor: "student_name" },
+    { header: "Sessions Attended", accessor: (row) => `${row.present} / ${row.total}` },
+    { header: "Attendance %", accessor: (row) => `${row.percentage}%` },
+    { header: "Status", accessor: (row) => statusBadge(row.percentage) },
   ];
 
   if (loading) {
@@ -176,7 +134,7 @@ export default function AttendanceLog() {
         <div className="flex items-center justify-center h-64">
           <div className="text-center">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
-            <p className="text-muted-foreground">Loading attendance sessions...</p>
+            <p className="text-muted-foreground">Loading attendance data...</p>
           </div>
         </div>
       </div>
@@ -189,10 +147,22 @@ export default function AttendanceLog() {
         <div className="flex items-center justify-center h-64">
           <div className="text-center">
             <p className="text-destructive mb-4">{error}</p>
-            <Button onClick={loadSessions} variant="outline">
-              Try Again
-            </Button>
+            <Button onClick={loadInitial} variant="outline">Try Again</Button>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (courses.length === 0) {
+    return (
+      <div className="content-container">
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold mb-2">Attendance Log</h1>
+          <p className="text-muted-foreground">Student attendance overview for your courses</p>
+        </div>
+        <div className="text-center py-12">
+          <p className="text-muted-foreground">You have no courses assigned</p>
         </div>
       </div>
     );
@@ -200,38 +170,43 @@ export default function AttendanceLog() {
 
   return (
     <div className="content-container">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-3xl font-bold mb-2">Attendance Log</h1>
-          <p className="text-muted-foreground">View all attendance sessions across all courses</p>
+          <p className="text-muted-foreground">Student attendance overview for your courses</p>
         </div>
-        <Button className="rounded-xl" disabled>
-          <Download className="w-4 h-4 mr-2" />
-          Export Records (Coming Soon)
-        </Button>
+        <Select
+          value={selectedCourseId?.toString()}
+          onValueChange={(v) => handleCourseChange(Number(v))}
+        >
+          <SelectTrigger className="w-48">
+            <SelectValue placeholder="Select course" />
+          </SelectTrigger>
+          <SelectContent>
+            {courses.map((c) => (
+              <SelectItem key={c.id} value={c.id.toString()}>{c.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
-      {sessions.length === 0 ? (
+      <div className="grid md:grid-cols-2 gap-6 mb-8">
+        <StatsCard title="Students Tracked" value={summaries.length.toString()} icon={GraduationCap} />
+        <StatsCard title="Average Attendance" value={`${avgPct}%`} icon={TrendingUp} />
+      </div>
+
+      {summaries.length === 0 ? (
         <div className="text-center py-12">
-          <p className="text-muted-foreground">No attendance sessions found</p>
+          <p className="text-muted-foreground">No attendance records for this course yet</p>
         </div>
       ) : (
         <DataTable
-          data={sessions}
+          data={summaries}
           columns={columns}
-          searchPlaceholder="Search sessions..."
+          searchPlaceholder="Search by student name..."
+          searchValue={(row) => row.student_name}
         />
       )}
-
-      <ConfirmationModal
-        open={showDeleteModal}
-        onOpenChange={setShowDeleteModal}
-        title="Delete Session"
-        description="Are you sure you want to delete this session? This action cannot be undone."
-        confirmText={deletingSession ? "Deleting..." : "Delete"}
-        onConfirm={handleDeleteSession}
-        variant="destructive"
-      />
     </div>
   );
 }

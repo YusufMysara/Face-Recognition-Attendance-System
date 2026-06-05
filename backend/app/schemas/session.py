@@ -22,3 +22,8 @@ class SessionResponse(SessionBase):
     status: SessionStatus
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class SessionWithAttendanceResponse(SessionResponse):
+    attendance_count: int = 0
+    total_students: int = 0

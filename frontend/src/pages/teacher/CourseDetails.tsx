@@ -4,7 +4,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { DataTable, Column } from "@/components/shared/DataTable";
-import { Play, Eye, Trash2, Users, Calendar, Loader2 } from "lucide-react";
+import { Play, Eye, Trash2, Users, Calendar, Loader2, ArrowLeft } from "lucide-react";
 import { ConfirmationModal } from "@/components/modals/ConfirmationModal";
 import { toast } from "sonner";
 import { coursesApi, sessionsApi, handleApiError } from "@/lib/api";
@@ -187,9 +187,14 @@ export default function CourseDetails() {
   return (
     <div className="content-container">
       <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-3xl font-bold mb-2">{course.name}</h1>
-          <p className="text-muted-foreground">{course.description}</p>
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="icon" onClick={() => navigate("/teacher/courses")}>
+            <ArrowLeft className="w-5 h-5" />
+          </Button>
+          <div>
+            <h1 className="text-3xl font-bold mb-2">{course.name}</h1>
+            <p className="text-muted-foreground">{course.description}</p>
+          </div>
         </div>
         <Button
           className="rounded-xl bg-success hover:bg-success/90"

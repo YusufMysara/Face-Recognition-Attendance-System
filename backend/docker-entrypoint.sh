@@ -21,7 +21,7 @@ fi
 # Apply all pending migrations (creates schema on first run, no-op thereafter).
 python -m alembic upgrade head
 
-# Seed the super-admin account (no-op if account already exists).
+# Seed the default admin account (no-op if account already exists).
 python scripts/seed_admin.py
 
 # Hand off to uvicorn.

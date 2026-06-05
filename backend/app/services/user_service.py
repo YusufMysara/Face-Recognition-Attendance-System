@@ -10,16 +10,11 @@ from typing import List
 from fastapi import HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
-from app.config import get_settings
 from app.models import User
 from app.repositories.user_repository import UserRepository
 from app.schemas.user import PasswordResetRequest, UserCreate, UserUpdate
 from app.utils.face import extract_face_embedding
 from app.utils.security import get_password_hash, validate_password_strength, verify_password
-
-_settings = get_settings()
-_SUPER_ADMIN_EMAIL = _settings.super_admin_email
-_SUPER_ADMIN_NAME = _settings.super_admin_name
 
 
 class UserService:
@@ -71,49 +66,6 @@ class UserService:
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
 
-        # Regular admins cannot modify other admin accounts
-        if (
-            user.role == "admin"
-            and current_user.email != _SUPER_ADMIN_EMAIL
-            and user.id != current_user.id
-        ):
-            if payload.name or payload.email or payload.password:
-                raise HTTPException(
-                    status_code=403,
-                    detail="Regular admins cannot modify other admin accounts",
-                )
-
-        # Password-change permission checks
-        if payload.password:
-            if current_user.email != _SUPER_ADMIN_EMAIL:
-                if user.role == "admin" and user.id != current_user.id:
-                    raise HTTPException(
-                        status_code=403,
-                        detail="Regular admins cannot change other admin passwords",
-                    )
-                if user.email == _SUPER_ADMIN_EMAIL or user.name == _SUPER_ADMIN_NAME:
-                    raise HTTPException(
-                        status_code=403,
-                        detail="Super Admin password can only be changed by Super Admin himself",
-                    )
-
-        # Guard Super Admin critical fields
-        if user.email == _SUPER_ADMIN_EMAIL or user.name == _SUPER_ADMIN_NAME:
-            if payload.role and payload.role != "admin":
-                raise HTTPException(
-                    status_code=403, detail="Super Admin role cannot be changed"
-                )
-            if payload.name and current_user.email != _SUPER_ADMIN_EMAIL:
-                raise HTTPException(
-                    status_code=403,
-                    detail="Super Admin name can only be changed by Super Admin himself",
-                )
-            if payload.email and current_user.email != _SUPER_ADMIN_EMAIL:
-                raise HTTPException(
-                    status_code=403,
-                    detail="Super Admin email can only be changed by Super Admin himself",
-                )
-
         # Apply changes
         if payload.name:
             user.name = payload.name
@@ -140,20 +92,9 @@ class UserService:
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
 
-        if current_user.email != _SUPER_ADMIN_EMAIL:
-            if user.role == "admin":
-                raise HTTPException(
-                    status_code=403,
-                    detail="Regular admins cannot delete admin accounts",
-                )
-            if user.id == current_user.id:
-                raise HTTPException(
-                    status_code=403, detail="You cannot delete your own account"
-                )
-
-        if user.email == _SUPER_ADMIN_EMAIL or user.name == _SUPER_ADMIN_NAME:
+        if user.id == current_user.id:
             raise HTTPException(
-                status_code=403, detail="Super Admin account cannot be deleted"
+                status_code=403, detail="You cannot delete your own account"
             )
 
         # Cascade deletes before removing the user row
@@ -211,18 +152,6 @@ class UserService:
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
 
-        if current_user.email != _SUPER_ADMIN_EMAIL:
-            if user.role == "admin":
-                raise HTTPException(
-                    status_code=403,
-                    detail="Regular admins cannot reset other admin passwords",
-                )
-            if user.email == _SUPER_ADMIN_EMAIL or user.name == _SUPER_ADMIN_NAME:
-                raise HTTPException(
-                    status_code=403,
-                    detail="Super Admin password can only be changed by Super Admin himself",
-                )
-
         validate_password_strength(payload.new_password)
         user.password_hash = get_password_hash(payload.new_password)
         user = self.repo.save(user)
@@ -274,6 +203,7 @@ class UserService:
             created_count = 0
             errors: list = []
             pending: list = []
+            seen_emails: set = set()
 
             for index, row in df.iterrows():
                 try:
@@ -287,20 +217,17 @@ class UserService:
                         errors.append(f"Row {index + 2}: Email is required")
                         continue
 
+                    email_lower = email.lower()
+                    if email_lower in seen_emails:
+                        errors.append(
+                            f"Row {index + 2}: Email '{email}' is duplicated in this file"
+                        )
+                        continue
+                    seen_emails.add(email_lower)
+
                     if self.repo.exists_email(email):
                         errors.append(
                             f"Row {index + 2}: Email '{email}' already exists"
-                        )
-                        continue
-
-                    # Early role check (before name validation, same as original)
-                    role_early = str(row["role"]).strip().lower()
-                    if (
-                        role_early == "admin"
-                        and current_user.email != _SUPER_ADMIN_EMAIL
-                    ):
-                        errors.append(
-                            f"Row {index + 2}: Only Super Admin can create admin users"
                         )
                         continue
 

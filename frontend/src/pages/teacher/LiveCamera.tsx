@@ -350,7 +350,7 @@ export default function LiveCamera() {
         let sessionData = await sessionsApi.get(sid);
         if (sessionData.status === "submitted") {
           toast.error("This session has already been submitted");
-          navigate(`/teacher/session/${sid}/review`);
+          navigate(`/teacher/session/${sid}`);
           return;
         }
         if (sessionData.status === "closed") {

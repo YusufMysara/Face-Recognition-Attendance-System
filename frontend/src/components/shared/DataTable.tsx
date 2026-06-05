@@ -23,6 +23,7 @@ interface DataTableProps<T> {
   searchable?: boolean;
   searchPlaceholder?: string;
   filterComponent?: React.ReactNode;
+  searchValue?: (row: T) => string;
 }
 
 export function DataTable<T extends Record<string, any>>({
@@ -31,15 +32,19 @@ export function DataTable<T extends Record<string, any>>({
   searchable = true,
   searchPlaceholder = "Search...",
   filterComponent,
+  searchValue,
 }: DataTableProps<T>) {
   const [searchTerm, setSearchTerm] = useState("");
 
   const filteredData = searchable
-    ? data.filter((row) =>
-        Object.values(row).some((value) =>
-          String(value).toLowerCase().includes(searchTerm.toLowerCase())
-        )
-      )
+    ? data.filter((row) => {
+        const lower = searchTerm.toLowerCase();
+        if (searchValue)
+          return searchValue(row).toLowerCase().includes(lower);
+        return Object.values(row).some((value) =>
+          String(value).toLowerCase().includes(lower)
+        );
+      })
     : data;
 
   const getCellValue = (row: T, column: Column<T>) => {

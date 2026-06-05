@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { DataTable, Column } from "@/components/shared/DataTable";
 import { Button } from "@/components/ui/button";
-import { Plus, Pencil, Trash2, Upload, FileSpreadsheet, Loader2, X, Filter } from "lucide-react";
+import { Plus, Pencil, Trash2, FileSpreadsheet, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { UserFormModal } from "@/components/modals/UserFormModal";
 import { ConfirmationModal } from "@/components/modals/ConfirmationModal";
@@ -43,6 +43,7 @@ export default function ManageUsers() {
   const [formLoading, setFormLoading] = useState(false);
   const [bulkUploadOpen, setBulkUploadOpen] = useState(false);
   const [bulkUploading, setBulkUploading] = useState(false);
+  const [uploadErrors, setUploadErrors] = useState<string[]>([]);
   const [roleFilter, setRoleFilter] = useState<string>("all");
 
   const filteredUsers = roleFilter === "all" ? users : users.filter(user => user.role === roleFilter);
@@ -82,9 +83,8 @@ export default function ManageUsers() {
   };
 
   const handleBulkUploadClick = () => {
-    console.log("Bulk upload button clicked");
+    setUploadErrors([]);
     setBulkUploadOpen(true);
-    console.log("bulkUploadOpen set to:", true);
   };
 
   const handleEditUser = (user: User) => {
@@ -155,11 +155,19 @@ export default function ManageUsers() {
   const handleBulkUpload = async (file: File) => {
     try {
       setBulkUploading(true);
+      setUploadErrors([]);
       const result = await usersApi.bulkUpload(file);
-      toast.success(`Successfully uploaded ${result.created_count} users`);
-      // Reload users to show the new ones
-      loadUsers();
-      setBulkUploadOpen(false);
+
+      if (result.created_count > 0) {
+        toast.success(`Created ${result.created_count} user${result.created_count !== 1 ? "s" : ""} successfully`);
+        loadUsers();
+      }
+
+      if (result.errors?.length > 0) {
+        setUploadErrors(result.errors);
+      } else {
+        setBulkUploadOpen(false);
+      }
     } catch (err) {
       toast.error(handleApiError(err));
     } finally {
@@ -180,31 +188,18 @@ export default function ManageUsers() {
     },
     {
       header: "Actions",
-      accessor: (row) => {
-        const isSuperAdmin = row.email === "admin@example.com" || row.name === "Super Admin";
-        const isCurrentUserSuperAdmin = currentUser?.email === "admin@example.com" || currentUser?.name === "Super Admin";
-        const isEditingAdmin = row.role === "admin";
-        const isOwnAccount = row.id === currentUser?.id;
-
-        // Show delete button logic:
-        // - Super Admin: can delete anyone (except Super Admin, but that's handled by backend)
-        // - Regular admin: can delete students and teachers, but not other admins and not themselves
-        const canDelete = isCurrentUserSuperAdmin ||
-                          (!isEditingAdmin && !isOwnAccount && !isSuperAdmin);
-
-        return (
-          <div className="flex gap-2">
-            <Button size="sm" variant="ghost" onClick={() => handleEditUser(row)}>
-              <Pencil className="w-4 h-4" />
+      accessor: (row) => (
+        <div className="flex gap-2">
+          <Button size="sm" variant="ghost" onClick={() => handleEditUser(row)}>
+            <Pencil className="w-4 h-4" />
+          </Button>
+          {row.id !== currentUser?.id && (
+            <Button size="sm" variant="ghost" onClick={() => handleDeleteClick(row)}>
+              <Trash2 className="w-4 h-4 text-destructive" />
             </Button>
-            {canDelete && (
-              <Button size="sm" variant="ghost" onClick={() => handleDeleteClick(row)}>
-                <Trash2 className="w-4 h-4 text-destructive" />
-              </Button>
-            )}
-          </div>
-        );
-      },
+          )}
+        </div>
+      ),
     },
   ];
 
@@ -274,8 +269,8 @@ export default function ManageUsers() {
         }
       />
 
-      <Dialog open={bulkUploadOpen} onOpenChange={setBulkUploadOpen}>
-        <DialogContent className="sm:max-w-[425px]">
+      <Dialog open={bulkUploadOpen} onOpenChange={(open) => { if (!open) setUploadErrors([]); setBulkUploadOpen(open); }}>
+        <DialogContent className="sm:max-w-[480px]">
           <DialogHeader>
             <DialogTitle>Bulk Upload Users</DialogTitle>
             <DialogDescription>
@@ -285,12 +280,12 @@ export default function ManageUsers() {
               <br />
               <strong>Optional column:</strong> group (for students)
               <br />
-              <strong>Note:</strong> Only Super Admin can create admin users via bulk upload.
+              <strong>Roles:</strong> admin, teacher, student
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid grid-cols-4 items-center gap-4">
-              <label htmlFor="excel-file" className="text-right">
+              <label htmlFor="excel-file" className="text-right text-sm font-medium">
                 Excel File
               </label>
               <input
@@ -300,17 +295,27 @@ export default function ManageUsers() {
                 className="col-span-3"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
-                  if (file) {
-                    handleBulkUpload(file);
-                  }
+                  if (file) handleBulkUpload(file);
                 }}
                 disabled={bulkUploading}
               />
             </div>
             {bulkUploading && (
-              <div className="flex items-center justify-center">
+              <div className="flex items-center justify-center text-sm text-muted-foreground">
                 <Loader2 className="w-4 h-4 animate-spin mr-2" />
                 Uploading and processing...
+              </div>
+            )}
+            {uploadErrors.length > 0 && (
+              <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3">
+                <p className="text-sm font-medium text-destructive mb-2">
+                  {uploadErrors.length} row{uploadErrors.length !== 1 ? "s" : ""} skipped:
+                </p>
+                <ul className="space-y-1 max-h-40 overflow-y-auto">
+                  {uploadErrors.map((err, i) => (
+                    <li key={i} className="text-xs text-destructive">{err}</li>
+                  ))}
+                </ul>
               </div>
             )}
           </div>
@@ -318,10 +323,10 @@ export default function ManageUsers() {
             <Button
               type="button"
               variant="outline"
-              onClick={() => setBulkUploadOpen(false)}
+              onClick={() => { setUploadErrors([]); setBulkUploadOpen(false); }}
               disabled={bulkUploading}
             >
-              Cancel
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>
