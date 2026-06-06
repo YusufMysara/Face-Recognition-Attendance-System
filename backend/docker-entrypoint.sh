@@ -22,7 +22,7 @@ fi
 python -m alembic upgrade head
 
 # Seed the default admin account (no-op if account already exists).
-python scripts/seed_admin.py
+PYTHONPATH=/app python scripts/seed_admin.py
 
 # Hand off to uvicorn.
 exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8000}"
