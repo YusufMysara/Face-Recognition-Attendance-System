@@ -36,19 +36,19 @@ import {
 
 // ── Constants ────────────────────────────────────────────────────────────────
 /** SCRFD-500M ONNX model served from /public/models/. */
-const MODEL_URL          = "/models/scrfd_500m.onnx";
+const MODEL_URL = "/models/scrfd_500m.onnx";
 /** MediaPipe FaceLandmarker model served from /public/models/. */
-const LANDMARK_URL       = "/models/face_landmarker.task";
+const LANDMARK_URL = "/models/face_landmarker.task";
 /** Faces smaller than this use motion-based liveness instead of EAR. */
-const MIN_LIVENESS_PX    = 80;
+const MIN_LIVENESS_PX = 80;
 /** Canvas size for face pixel sampling (motion mode). */
 const MOTION_SAMPLE_SIZE = 32;
 /** Min score to cache a recognised face. */
 const CACHE_CONFIRM_THRESH = 0.35;
 /** Max face centre movement (px) to still match a cached entry. */
-const CACHE_MATCH_DIST_PX  = 100;
+const CACHE_MATCH_DIST_PX = 100;
 /** Re-verify a cached face after this many ms. */
-const CACHE_TTL_MS         = 30_000;
+const CACHE_TTL_MS = 30_000;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface Course {
@@ -88,7 +88,7 @@ interface RecognitionResult {
   student_id: number | null;
   student_name: string | null;
   score: number;
-  liveness_failed?:   boolean;
+  liveness_failed?: boolean;
   liveness_checking?: boolean;
   box: { x: number; y: number; width: number; height: number };
 }
@@ -100,16 +100,16 @@ interface RecognitionResult {
  * canvas and return the raw RGBA pixel data for frame-to-frame MAD computation.
  */
 function sampleFacePixels(
-  video:  HTMLVideoElement,
-  box:    { x: number; y: number; width: number; height: number },
+  video: HTMLVideoElement,
+  box: { x: number; y: number; width: number; height: number },
   canvas: HTMLCanvasElement,
 ): Uint8ClampedArray | null {
   const sx = Math.max(0, Math.round(box.x));
   const sy = Math.max(0, Math.round(box.y));
-  const sw = Math.min(video.videoWidth  - sx, Math.round(box.width));
+  const sw = Math.min(video.videoWidth - sx, Math.round(box.width));
   const sh = Math.min(video.videoHeight - sy, Math.round(box.height));
   if (sw < 5 || sh < 5) return null;
-  canvas.width  = MOTION_SAMPLE_SIZE;
+  canvas.width = MOTION_SAMPLE_SIZE;
   canvas.height = MOTION_SAMPLE_SIZE;
   const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
   ctx.drawImage(video, sx, sy, sw, sh, 0, 0, MOTION_SAMPLE_SIZE, MOTION_SAMPLE_SIZE);
@@ -174,13 +174,13 @@ function drawDetectionBoxes(
     const w = b.width * scale;
     const h = b.height * scale;
 
-    const spoofed     = match?.liveness_failed    === true;
-    const checking    = !spoofed && match?.liveness_checking === true;
-    const recognized  = !spoofed && !checking && match?.student_id != null;
+    const spoofed = match?.liveness_failed === true;
+    const checking = !spoofed && match?.liveness_checking === true;
+    const recognized = !spoofed && !checking && match?.student_id != null;
     const borderColor = spoofed ? "#ef4444" : checking ? "#f97316" : recognized ? "#22c55e" : "#94a3b8";
     const accentColor = spoofed ? "#f87171" : checking ? "#fb923c" : recognized ? "#4ade80" : "#cbd5e1";
-    const labelBg     = spoofed ? "#b91c1c" : checking ? "#c2410c" : recognized ? "#16a34a" : "#475569";
-    const label       = spoofed ? "Spoof detected" : checking ? "Checking..." : recognized ? match!.student_name! : "Unknown";
+    const labelBg = spoofed ? "#b91c1c" : checking ? "#c2410c" : recognized ? "#16a34a" : "#475569";
+    const label = spoofed ? "Spoof detected" : checking ? "Checking..." : recognized ? match!.student_name! : "Unknown";
 
     ctx.strokeStyle = borderColor;
     ctx.lineWidth = 2;
@@ -190,10 +190,10 @@ function drawDetectionBoxes(
     ctx.strokeStyle = accentColor;
     ctx.lineWidth = 3;
     ctx.lineCap = "round";
-    ctx.beginPath(); ctx.moveTo(x,       y + c); ctx.lineTo(x,       y);       ctx.lineTo(x + c,   y);       ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(x+w-c,   y);     ctx.lineTo(x+w,     y);       ctx.lineTo(x+w,     y + c);   ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(x,       y+h-c); ctx.lineTo(x,       y+h);     ctx.lineTo(x + c,   y+h);     ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(x+w-c,   y+h);   ctx.lineTo(x+w,     y+h);     ctx.lineTo(x+w,     y+h-c);   ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x, y + c); ctx.lineTo(x, y); ctx.lineTo(x + c, y); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x + w - c, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + c); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x, y + h - c); ctx.lineTo(x, y + h); ctx.lineTo(x + c, y + h); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x + w - c, y + h); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w, y + h - c); ctx.stroke();
 
     ctx.font = "bold 11px monospace";
     const textW = ctx.measureText(label).width + 8;
@@ -239,27 +239,27 @@ export default function LiveCamera() {
   // Both loops are continuous chains — next iteration starts as soon as the
   // previous one finishes (+ 100ms pause for recognition), so there's no
   // "missed tick" wait time.
-  const detectLoopRef  = useRef<number | null>(null);
+  const detectLoopRef = useRef<number | null>(null);
   const isDetectingRef = useRef(false); // prevents overlapping SCRFD calls
 
   // ── Flag refs ─────────────────────────────────────────────────────────────
-  const cameraActiveRef   = useRef(false);
-  const isRecognizingRef  = useRef(false);
-  const modelLoadedRef    = useRef(false);
+  const cameraActiveRef = useRef(false);
+  const isRecognizingRef = useRef(false);
+  const modelLoadedRef = useRef(false);
 
   // ── Data refs (read inside interval callbacks) ────────────────────────────
-  const latestDetectionsRef  = useRef<ScrfdDetection[]>([]);
-  const lastRecognitionRef   = useRef<RecognitionResult[]>([]);
-  const detectorRef          = useRef<SCRFDDetector | null>(null);
-  const landmarkDetectorRef  = useRef<LandmarkDetector | null>(null);
-  const livenessTrackerRef   = useRef(new BlinkLivenessTracker());
-  const motionCanvasRef      = useRef<HTMLCanvasElement>(document.createElement('canvas'));
-  const confirmedFacesRef    = useRef<ConfirmedFace[]>([]);
-  const currentSessionRef    = useRef<Session | null>(null);
+  const latestDetectionsRef = useRef<ScrfdDetection[]>([]);
+  const lastRecognitionRef = useRef<RecognitionResult[]>([]);
+  const detectorRef = useRef<SCRFDDetector | null>(null);
+  const landmarkDetectorRef = useRef<LandmarkDetector | null>(null);
+  const livenessTrackerRef = useRef(new BlinkLivenessTracker());
+  const motionCanvasRef = useRef<HTMLCanvasElement>(document.createElement('canvas'));
+  const confirmedFacesRef = useRef<ConfirmedFace[]>([]);
+  const currentSessionRef = useRef<Session | null>(null);
   useEffect(() => { currentSessionRef.current = currentSession; }, [currentSession]);
 
   const sessionId = searchParams.get("session_id");
-  const courseId  = searchParams.get("course_id");
+  const courseId = searchParams.get("course_id");
 
   // ── Load SCRFD + MediaPipe FaceLandmarker once ───────────────────────────
   useEffect(() => {
@@ -392,7 +392,7 @@ export default function LiveCamera() {
     if (!currentSession) return;
     try {
       await sessionsApi.end(currentSession.id);
-      navigate(`/teacher/session/${currentSession.id}/review`);
+      navigate(`/teacher/session/${currentSession.id}`);
     } catch (err) {
       toast.error(handleApiError(err));
     }
@@ -403,7 +403,7 @@ export default function LiveCamera() {
   // frame is detected within one inference cycle (~50–100 ms) every time.
   const detectFaces = useCallback(async () => {
     if (!modelLoadedRef.current || !cameraActiveRef.current) return;
-    const video   = videoRef.current;
+    const video = videoRef.current;
     const overlay = overlayCanvasRef.current;
     if (!video || !overlay) return;
     if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.paused) return;
@@ -415,8 +415,8 @@ export default function LiveCamera() {
     // Route each face to the correct liveness mode based on size:
     //   close (≥ MIN_LIVENESS_PX) → EAR via MediaPipe (blink detection)
     //   far   (< MIN_LIVENESS_PX) → pixel MAD between frames (motion detection)
-    const earSamples:   (EarSample | null)[]           = [];
-    const facePixels:   (Uint8ClampedArray | null)[]   = [];
+    const earSamples: (EarSample | null)[] = [];
+    const facePixels: (Uint8ClampedArray | null)[] = [];
 
     for (const det of detections) {
       const isClose = det.box.width >= MIN_LIVENESS_PX && det.box.height >= MIN_LIVENESS_PX;
@@ -439,7 +439,7 @@ export default function LiveCamera() {
     if (!transform) return;
     const { scale, offsetX, offsetY, canvasW, canvasH } = transform;
     if (overlay.width !== canvasW || overlay.height !== canvasH) {
-      overlay.width  = canvasW;
+      overlay.width = canvasW;
       overlay.height = canvasH;
     }
     const ctx = overlay.getContext("2d")!;
@@ -452,13 +452,13 @@ export default function LiveCamera() {
     if (isRecognizingRef.current || !cameraActiveRef.current) return;
 
     const detections = latestDetectionsRef.current;
-    const session    = currentSessionRef.current;
-    const video      = videoRef.current;
+    const session = currentSessionRef.current;
+    const video = videoRef.current;
 
     // No faces detected by SCRFD → clear everything and skip backend call
     if (!detections.length || !session || !video) {
       lastRecognitionRef.current = [];
-      confirmedFacesRef.current  = [];
+      confirmedFacesRef.current = [];
       setRecognizedNow(0);
       return;
     }
@@ -472,16 +472,16 @@ export default function LiveCamera() {
       // Evict cache entries whose face has left the frame.
       confirmedFacesRef.current = confirmedFacesRef.current.filter((cf) =>
         detections.some((det) => {
-          const dx = (det.box.x + det.box.width  / 2) - cf.cx;
+          const dx = (det.box.x + det.box.width / 2) - cf.cx;
           const dy = (det.box.y + det.box.height / 2) - cf.cy;
           return Math.hypot(dx, dy) < CACHE_MATCH_DIST_PX * 1.5;
         }),
       );
 
-      const toRecognize:     ScrfdDetection[]       = [];
-      const cachedResults:   RecognitionResult[]    = [];
-      const spoofResults:    RecognitionResult[]    = [];
-      const checkingResults: RecognitionResult[]    = [];
+      const toRecognize: ScrfdDetection[] = [];
+      const cachedResults: RecognitionResult[] = [];
+      const spoofResults: RecognitionResult[] = [];
+      const checkingResults: RecognitionResult[] = [];
 
       for (const det of detections) {
         const state = livenessTrackerRef.current.getState(det.box);
@@ -503,8 +503,8 @@ export default function LiveCamera() {
         }
 
         // Live — check cache first.
-        const cx  = det.box.x + det.box.width  / 2;
-        const cy  = det.box.y + det.box.height / 2;
+        const cx = det.box.x + det.box.width / 2;
+        const cy = det.box.y + det.box.height / 2;
         const hit = confirmedFacesRef.current.find((cf) =>
           Math.hypot(cx - cf.cx, cy - cf.cy) < CACHE_MATCH_DIST_PX &&
           now - cf.confirmedAt < CACHE_TTL_MS,
@@ -531,20 +531,20 @@ export default function LiveCamera() {
 
       // ── Phase 1: draw crops for live unrecognised detections ─────────────
       const canvases: HTMLCanvasElement[] = [];
-      const boxes:    RecognitionResult["box"][] = [];
-      const allKps:   number[][][] = [];   // per-crop 5-point landmarks in crop coords
+      const boxes: RecognitionResult["box"][] = [];
+      const allKps: number[][][] = [];   // per-crop 5-point landmarks in crop coords
 
       for (const det of toRecognize) {
         const { x, y, width, height } = det.box;
         const pad = 0.85; // 2.7× face width — matches MiniFASNetV2 training scale
-        const cx2 = Math.max(0, Math.round(x - width  * pad));
+        const cx2 = Math.max(0, Math.round(x - width * pad));
         const cy2 = Math.max(0, Math.round(y - height * pad));
-        const cw  = Math.min(video.videoWidth  - cx2, Math.round(width  * (1 + 2 * pad)));
-        const ch  = Math.min(video.videoHeight - cy2, Math.round(height * (1 + 2 * pad)));
+        const cw = Math.min(video.videoWidth - cx2, Math.round(width * (1 + 2 * pad)));
+        const ch = Math.min(video.videoHeight - cy2, Math.round(height * (1 + 2 * pad)));
         if (cw < 20 || ch < 20) continue;
 
         const canvas = document.createElement("canvas");
-        canvas.width  = cw;
+        canvas.width = cw;
         canvas.height = ch;
         canvas.getContext("2d")!.drawImage(video, cx2, cy2, cw, ch, 0, 0, cw, ch);
         canvases.push(canvas);
@@ -573,9 +573,9 @@ export default function LiveCamera() {
       // can't interrupt between crops (~5 ms total vs ~1600 ms with toBlob).
       const crops: Blob[] = canvases.map((canvas) => {
         const dataURL = canvas.toDataURL("image/jpeg", 0.75);
-        const base64  = dataURL.slice("data:image/jpeg;base64,".length);
-        const binary  = atob(base64);
-        const bytes   = new Uint8Array(binary.length);
+        const base64 = dataURL.slice("data:image/jpeg;base64,".length);
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
         return new Blob([bytes], { type: "image/jpeg" });
       });
@@ -600,7 +600,7 @@ export default function LiveCamera() {
       // Store high-confidence matches in the cache.
       for (const r of newResults) {
         if (r.student_id !== null && r.score >= CACHE_CONFIRM_THRESH) {
-          const cx = r.box.x + r.box.width  / 2;
+          const cx = r.box.x + r.box.width / 2;
           const cy = r.box.y + r.box.height / 2;
           const existing = confirmedFacesRef.current.find((cf) =>
             Math.hypot(cx - cf.cx, cy - cf.cy) < CACHE_MATCH_DIST_PX,
@@ -628,7 +628,7 @@ export default function LiveCamera() {
           status: "detected" as const,
         }));
         setDetectedStudents((prev) => {
-          const seen   = new Set(prev.map((s) => s.id));
+          const seen = new Set(prev.map((s) => s.id));
           const unique = incoming.filter((s) => !seen.has(s.id));
           if (unique.length > 0) toast.success(`${unique.length} student(s) marked present`);
           return [...prev, ...unique].slice(-10);
@@ -644,15 +644,15 @@ export default function LiveCamera() {
 
   // ── Camera toggle ──────────────────────────────────────────────────────────
   const handleToggleCamera = async () => {
-    if (!currentSession)                        { toast.error("Please start a session first"); return; }
-    if (currentSession.status !== "open")       { toast.error("Session is not active");       return; }
+    if (!currentSession) { toast.error("Please start a session first"); return; }
+    if (currentSession.status !== "open") { toast.error("Session is not active"); return; }
 
     if (!isCameraActive) {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
-            width:    { ideal: 1280 },
-            height:   { ideal: 720  },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
             deviceId: selectedCameraId ? { exact: selectedCameraId } : undefined,
           },
         });
@@ -693,9 +693,9 @@ export default function LiveCamera() {
       }
     } else {
       // Stop immediately — in-flight callbacks will bail on cameraActiveRef check
-      cameraActiveRef.current  = false;
+      cameraActiveRef.current = false;
       isRecognizingRef.current = false;
-      isDetectingRef.current   = false;
+      isDetectingRef.current = false;
 
       if (detectLoopRef.current) { cancelAnimationFrame(detectLoopRef.current); detectLoopRef.current = null; }
 
@@ -708,8 +708,8 @@ export default function LiveCamera() {
       if (overlay) overlay.getContext("2d")?.clearRect(0, 0, overlay.width, overlay.height);
 
       latestDetectionsRef.current = [];
-      lastRecognitionRef.current  = [];
-      confirmedFacesRef.current   = [];
+      lastRecognitionRef.current = [];
+      confirmedFacesRef.current = [];
       livenessTrackerRef.current.reset();
 
       setIsCameraActive(false);
@@ -945,20 +945,17 @@ export default function LiveCamera() {
           ) : (
             <div className="space-y-4">
               <div
-                className={`p-4 rounded-lg border ${
-                  facesNow > 0 ? "bg-green-50 border-green-200" : "bg-yellow-50 border-yellow-200"
-                }`}
+                className={`p-4 rounded-lg border ${facesNow > 0 ? "bg-green-50 border-green-200" : "bg-yellow-50 border-yellow-200"
+                  }`}
               >
                 <div className="flex items-center gap-2 mb-1">
                   <div
-                    className={`w-2 h-2 rounded-full animate-pulse ${
-                      facesNow > 0 ? "bg-green-500" : "bg-yellow-400"
-                    }`}
+                    className={`w-2 h-2 rounded-full animate-pulse ${facesNow > 0 ? "bg-green-500" : "bg-yellow-400"
+                      }`}
                   />
                   <span
-                    className={`text-sm font-medium ${
-                      facesNow > 0 ? "text-green-800" : "text-yellow-800"
-                    }`}
+                    className={`text-sm font-medium ${facesNow > 0 ? "text-green-800" : "text-yellow-800"
+                      }`}
                   >
                     {facesNow > 0
                       ? `${facesNow} face${facesNow !== 1 ? "s" : ""} in frame`
@@ -969,8 +966,8 @@ export default function LiveCamera() {
                   {isRecognizing
                     ? "Identifying students…"
                     : facesNow > 0
-                    ? "Matching against enrolled students"
-                    : "Point the camera at student faces"}
+                      ? "Matching against enrolled students"
+                      : "Point the camera at student faces"}
                 </p>
               </div>
 

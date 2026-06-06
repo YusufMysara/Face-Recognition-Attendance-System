@@ -22,8 +22,8 @@ RUN pip install --no-cache-dir --upgrade pip \
 # Copy application source (see .dockerignore for exclusions).
 COPY . .
 
-# Make the entrypoint executable.
-RUN chmod +x docker-entrypoint.sh
+# Strip Windows carriage returns and make the entrypoint executable.
+RUN sed -i 's/\r//' docker-entrypoint.sh && chmod +x docker-entrypoint.sh
 
 # The entrypoint creates required dirs, initialises the DB, seeds the
 # super-admin, then execs uvicorn.
