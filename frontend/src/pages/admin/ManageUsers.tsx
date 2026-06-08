@@ -25,6 +25,8 @@ interface User {
   email: string;
   role: string;
   group?: string;
+  year?: number;
+  department?: string;
   photo_path?: string;
 }
 
@@ -121,9 +123,12 @@ export default function ManageUsers() {
           name: data.name,
           email: data.email,
           role: data.role.toLowerCase(),
-          ...(data.role === "student" && { group: data.group }),
+          ...(data.role === "student" && {
+            group: data.group,
+            year: data.year,
+            department: data.department,
+          }),
         };
-        // Only include password if it's provided
         if (data.password) {
           payload.password = data.password;
         }
@@ -136,6 +141,8 @@ export default function ManageUsers() {
         if (data.email !== selectedUser.email) payload.email = data.email;
         if (data.group !== selectedUser.group) payload.group = data.group;
         if (data.role !== selectedUser.role) payload.role = data.role;
+        if (data.year !== selectedUser.year) payload.year = data.year;
+        if (data.department !== selectedUser.department) payload.department = data.department;
         if (data.password) payload.password = data.password;
 
         if (Object.keys(payload).length > 0) {
@@ -278,7 +285,7 @@ export default function ManageUsers() {
               <br />
               <strong>Required columns:</strong> name, email, role
               <br />
-              <strong>Optional column:</strong> group (for students)
+              <strong>Student columns:</strong> year (1–4), department, group
               <br />
               <strong>Roles:</strong> admin, teacher, student
             </DialogDescription>

@@ -82,9 +82,11 @@ export const usersApi = {
   create: async (payload: {
     name: string;
     email: string;
-    password: string;
+    password?: string;
     role: string;
     group?: string;
+    year?: number;
+    department?: string;
   }) => {
     const response = await fetchWithAuth("/admin/users", {
       method: "POST",
@@ -102,6 +104,8 @@ export const usersApi = {
     email?: string;
     role?: string;
     group?: string;
+    year?: number;
+    department?: string;
     password?: string;
   }) => {
     const response = await fetchWithAuth(`/admin/users/${userId}`, {
@@ -239,6 +243,8 @@ export const coursesApi = {
     name: string;
     description: string;
     teacher_id?: number;
+    year?: number;
+    department?: string;
   }) => {
     const response = await fetchWithAuth("/courses", {
       method: "POST",
@@ -255,6 +261,8 @@ export const coursesApi = {
     name?: string;
     description?: string;
     teacher_id?: number;
+    year?: number;
+    department?: string;
   }) => {
     const response = await fetchWithAuth(`/courses/${courseId}`, {
       method: "PUT",

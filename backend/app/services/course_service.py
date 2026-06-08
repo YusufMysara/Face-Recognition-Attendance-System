@@ -6,27 +6,39 @@ from sqlalchemy.orm import Session
 
 from app.models import Course, User
 from app.repositories.course_repository import CourseRepository
+from app.repositories.user_repository import UserRepository
 from app.schemas.course import CourseAssignment, CourseCreate, CourseUpdate, TeacherAssignment
+from app.schemas.user import validate_year_department
 
 
 class CourseService:
     def __init__(self, db: Session):
         self.db = db
         self.repo = CourseRepository(db)
+        self.user_repo = UserRepository(db)
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
     def _get_user_by_role(self, user_id: int, role: str) -> User:
         return self.repo.get_user_by_role(user_id, role)
 
+    def _auto_enroll_course(self, course: Course) -> None:
+        """Enroll all matching students into a newly created course."""
+        students = self.repo.get_students_by_year_dept(course.year, course.department)
+        for student in students:
+            if not self.repo.get_enrollment(student.id, course.id):
+                self.repo.add_enrollment(student.id, course.id)
+
     # ── CRUD ──────────────────────────────────────────────────────────────────
 
     def create_course(self, payload: CourseCreate) -> Course:
+        validate_year_department(payload.year, payload.department)
         if payload.teacher_id is not None:
             teacher = self._get_user_by_role(payload.teacher_id, "teacher")
             if not teacher:
                 raise HTTPException(status_code=404, detail="Teacher not found")
         course = self.repo.create(**payload.model_dump())
+        self._auto_enroll_course(course)
         self.db.commit()
         return course
 
@@ -55,6 +67,7 @@ class CourseService:
             raise HTTPException(status_code=404, detail="Course not found")
         for key, value in payload.model_dump(exclude_unset=True).items():
             setattr(course, key, value)
+        validate_year_department(course.year, course.department)
         course = self.repo.save(course)
         self.db.commit()
         return course
@@ -91,9 +104,7 @@ class CourseService:
             raise HTTPException(status_code=404, detail="Invalid student or course")
         link = self.repo.get_enrollment(payload.student_id, payload.course_id)
         if not link:
-            raise HTTPException(
-                status_code=400, detail="Student not assigned to course"
-            )
+            raise HTTPException(status_code=400, detail="Student not assigned to course")
         self.repo.remove_enrollment(link)
         self.db.commit()
         return {"detail": "Student removed from course"}
@@ -123,6 +134,8 @@ class CourseService:
                 "id": s.id,
                 "name": s.name,
                 "email": s.email,
+                "year": s.year,
+                "department": s.department,
                 "group": s.group,
             }
             for s in students

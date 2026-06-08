@@ -15,6 +15,8 @@ interface Course {
   description: string;
   teacher_id?: number;
   teacher_name?: string;
+  year?: number;
+  department?: string;
 }
 
 interface Teacher {
@@ -126,6 +128,8 @@ export default function ManageCourses() {
           name: data.name,
           description: data.description,
           teacher_id: data.teacher_id ? parseInt(data.teacher_id) : undefined,
+          year: data.year,
+          department: data.department,
         };
         const newCourse = await coursesApi.create(payload);
 
@@ -144,6 +148,8 @@ export default function ManageCourses() {
         if (data.name !== selectedCourse.name) payload.name = data.name;
         if (data.description !== selectedCourse.description) payload.description = data.description;
         if (parseInt(data.teacher_id) !== selectedCourse.teacher_id) payload.teacher_id = parseInt(data.teacher_id);
+        if (data.year !== selectedCourse.year) payload.year = data.year;
+        if (data.department !== selectedCourse.department) payload.department = data.department;
 
         if (Object.keys(payload).length > 0) {
           const updatedCourse = await coursesApi.update(selectedCourse.id, payload);

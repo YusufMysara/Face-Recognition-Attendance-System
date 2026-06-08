@@ -9,6 +9,8 @@ interface Course {
   name: string;
   description: string;
   teacher_id?: number;
+  year?: number;
+  department?: string;
 }
 
 export default function Courses() {
@@ -86,6 +88,8 @@ export default function Courses() {
               id={String(course.id)}
               name={course.name}
               code={`COURSE-${course.id}`}
+              year={course.year}
+              department={course.department}
               onView={() => handleViewCourse(course.id)}
             />
           ))}

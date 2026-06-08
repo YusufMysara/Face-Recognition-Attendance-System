@@ -111,3 +111,14 @@ class CourseRepository:
         self.db.query(StudentCourse).filter(
             StudentCourse.course_id == course_id
         ).delete(synchronize_session=False)
+
+    def get_students_by_year_dept(self, year: int, department: str) -> List[User]:
+        return (
+            self.db.query(User)
+            .filter(
+                User.role == "student",
+                User.year == year,
+                User.department == department,
+            )
+            .all()
+        )

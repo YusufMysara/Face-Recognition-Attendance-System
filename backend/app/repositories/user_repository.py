@@ -92,3 +92,10 @@ class UserRepository:
         self.db.query(Course).filter(Course.teacher_id == teacher_id).update(
             {Course.teacher_id: None}, synchronize_session=False
         )
+
+    def get_courses_by_year_dept(self, year: int, department: str) -> List[Course]:
+        return (
+            self.db.query(Course)
+            .filter(Course.year == year, Course.department == department)
+            .all()
+        )
