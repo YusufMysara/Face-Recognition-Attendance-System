@@ -392,7 +392,7 @@ export default function LiveCamera() {
     if (!currentSession) return;
     try {
       await sessionsApi.end(currentSession.id);
-      navigate(`/teacher/session/${currentSession.id}/review`);
+      navigate(`/teacher/session/${currentSession.id}`);
     } catch (err) {
       toast.error(handleApiError(err));
     }
