@@ -20,6 +20,10 @@ pytest.ini
 *.db
 uploads/
 
+# InsightFace models are downloaded during build — exclude any local copy
+# from the build context to keep it small
+insightface_models/
+
 # Secrets — never bake .env into the image
 .env
 

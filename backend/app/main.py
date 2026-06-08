@@ -11,6 +11,7 @@ from app.attendance import router as attendance_router
 from app.config import get_settings
 from app.courses import router as courses_router
 from app.database import Base, engine
+import app.models  # noqa: F401 — registers all ORM classes with Base.metadata
 from app.limiter import limiter
 from app.sessions import router as sessions_router
 from app.users import router as admin_router

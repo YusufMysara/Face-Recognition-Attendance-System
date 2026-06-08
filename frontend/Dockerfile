@@ -16,6 +16,13 @@ ARG VITE_API_BASE_URL=""
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 
 COPY . .
+
+# ORT Web serves .mjs worker scripts via a dev-mode Vite middleware that reads
+# them from node_modules at request time — those scripts never land in dist/.
+# Copy them to public/ort-wasm/ here so Vite includes them in the build output
+# and nginx can serve them at /ort-wasm/*.mjs at runtime.
+RUN cp node_modules/onnxruntime-web/dist/*.mjs public/ort-wasm/
+
 RUN npm run build
 
 # ── Stage 2: serve ────────────────────────────────────────────────────────────

@@ -43,6 +43,9 @@ yarn-error.log*
 *.db-shm
 *.db-wal
 
+# InsightFace model weights — downloaded during Docker build, not committed
+backend/insightface_models/
+
 # OS
 .DS_Store
 Thumbs.db

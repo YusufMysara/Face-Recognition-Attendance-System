@@ -19,6 +19,14 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip \
  && pip install --no-cache-dir -r requirements.txt
 
+# Pre-download the InsightFace buffalo_s model so it's baked into the image.
+# Without this, InsightFace downloads ~125 MB from GitHub on every fresh
+# container start, blocking the warmup thread indefinitely.
+RUN python -c "\
+from insightface.app import FaceAnalysis; \
+app = FaceAnalysis(name='buffalo_s', providers=['CPUExecutionProvider']); \
+app.prepare(ctx_id=0, det_size=(640, 640))"
+
 # Copy application source (see .dockerignore for exclusions).
 COPY . .
 
