@@ -1,9 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { DataTable, Column } from "@/components/shared/DataTable";
 import { ArrowLeft, Plus, Trash2, Loader2 } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AddStudentsModal } from "@/components/modals/AddStudentsModal";
 import { ConfirmationModal } from "@/components/modals/ConfirmationModal";
 import { coursesApi, usersApi, handleApiError } from "@/lib/api";
@@ -40,6 +41,18 @@ export default function CourseDetails() {
   const [removeModalOpen, setRemoveModalOpen] = useState(false);
   const [studentToRemove, setStudentToRemove] = useState<Student | null>(null);
   const [assigningStudents, setAssigningStudents] = useState(false);
+  const [groupFilter, setGroupFilter] = useState<string>("all");
+
+  const groups = useMemo(() => {
+    const unique = new Set(enrolledStudents.map(s => s.group).filter(Boolean) as string[]);
+    return Array.from(unique).sort();
+  }, [enrolledStudents]);
+
+  const filteredEnrolled = useMemo(
+    () => groupFilter === "all" ? enrolledStudents : enrolledStudents.filter(s => s.group === groupFilter),
+    [enrolledStudents, groupFilter]
+  );
+
   // Load course and student data on mount
   useEffect(() => {
     if (courseId) {
@@ -245,9 +258,22 @@ export default function CourseDetails() {
         </Card>
       ) : (
         <DataTable
-          data={enrolledStudents}
+          data={filteredEnrolled}
           columns={columns}
           searchPlaceholder="Search students..."
+          filterComponent={
+            <Select value={groupFilter} onValueChange={setGroupFilter}>
+              <SelectTrigger className="w-40">
+                <SelectValue placeholder="All groups" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All groups</SelectItem>
+                {groups.map(g => (
+                  <SelectItem key={g} value={g}>{g}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          }
         />
       )}
 

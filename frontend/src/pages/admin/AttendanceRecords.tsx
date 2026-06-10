@@ -3,7 +3,7 @@ import { DataTable, Column } from "@/components/shared/DataTable";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { attendanceApi, usersApi, handleApiError } from "@/lib/api";
+import { attendanceApi, usersApi, coursesApi, handleApiError } from "@/lib/api";
 import { StatsCard } from "@/components/shared/StatsCard";
 import { GraduationCap, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
@@ -26,6 +26,7 @@ interface StudentSummary {
   student_id: number;
   student_name: string;
   group: string;
+  course_name: string;
   present: number;
   total: number;
   percentage: number;
@@ -33,25 +34,26 @@ interface StudentSummary {
 
 function statusBadge(pct: number) {
   if (pct >= 75) return <Badge className="bg-green-100 text-green-800 hover:bg-green-100">Good</Badge>;
-  if (pct >= 50) return <Badge className="bg-yellow-100 text-yellow-800 hover:bg-yellow-100">At Risk</Badge>;
   return <Badge className="bg-red-100 text-red-800 hover:bg-red-100">Critical</Badge>;
 }
 
 function buildSummaries(records: AttendanceRecord[], userMap: Map<number, User>): StudentSummary[] {
-  const map = new Map<number, { name: string; present: number; total: number }>();
+  const map = new Map<string, { student_id: number; name: string; course_name: string; present: number; total: number }>();
   for (const r of records) {
-    if (!map.has(r.student_id)) {
-      map.set(r.student_id, { name: r.student_name || `Student ${r.student_id}`, present: 0, total: 0 });
+    const key = `${r.student_id}__${r.course_name ?? ""}`;
+    if (!map.has(key)) {
+      map.set(key, { student_id: r.student_id, name: r.student_name || `Student ${r.student_id}`, course_name: r.course_name ?? "—", present: 0, total: 0 });
     }
-    const entry = map.get(r.student_id)!;
+    const entry = map.get(key)!;
     entry.total += 1;
     if (r.status === "present") entry.present += 1;
   }
-  return Array.from(map.entries())
-    .map(([student_id, { name, present, total }]) => ({
+  return Array.from(map.values())
+    .map(({ student_id, name, course_name, present, total }) => ({
       student_id,
       student_name: name,
       group: userMap.get(student_id)?.group || "—",
+      course_name,
       present,
       total,
       percentage: total > 0 ? Math.round((present / total) * 100) : 0,
@@ -62,10 +64,17 @@ function buildSummaries(records: AttendanceRecord[], userMap: Map<number, User>)
 export default function AttendanceRecords() {
   const [rawRecords, setRawRecords] = useState<AttendanceRecord[]>([]);
   const [userMap, setUserMap] = useState<Map<number, User>>(new Map());
+  const [courseYearMap, setCourseYearMap] = useState<Map<string, number>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Filter state — applied top-down: year → course → group → status
+  const [yearFilter, setYearFilter] = useState<string>("all");
   const [courseFilter, setCourseFilter] = useState<string>("all");
   const [groupFilter, setGroupFilter] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+
+  const years = [1, 2, 3, 4];
 
   useEffect(() => {
     load();
@@ -75,14 +84,24 @@ export default function AttendanceRecords() {
     try {
       setLoading(true);
       setError(null);
-      const [records, users] = await Promise.all([attendanceApi.getAll(), usersApi.list()]);
+      const [records, users, allCourses] = await Promise.all([
+        attendanceApi.getAll(),
+        usersApi.list(),
+        coursesApi.list(),
+      ]);
+
       const map = new Map<number, User>();
       for (const u of users as User[]) map.set(u.id, u);
-      const recs = records as AttendanceRecord[];
-      const firstCourse = [...new Set(recs.map((r) => r.course_name).filter(Boolean) as string[])].sort()[0];
-      setRawRecords(recs);
+
+      // Map course name → year so we can filter records by year
+      const yearMap = new Map<string, number>();
+      for (const c of allCourses as { name: string; year: number }[]) {
+        if (c.name && c.year) yearMap.set(c.name, c.year);
+      }
+
+      setRawRecords(records as AttendanceRecord[]);
       setUserMap(map);
-      if (firstCourse) setCourseFilter(firstCourse);
+      setCourseYearMap(yearMap);
     } catch (err) {
       setError(handleApiError(err));
       toast.error(handleApiError(err));
@@ -91,34 +110,64 @@ export default function AttendanceRecords() {
     }
   };
 
-  const courses = useMemo(() => {
-    const unique = new Set(rawRecords.map((r) => r.course_name).filter(Boolean) as string[]);
+  // Step 1 — apply year filter to raw records
+  const yearFilteredRecords = useMemo(() => {
+    if (yearFilter === "all") return rawRecords;
+    return rawRecords.filter(
+      (r) => String(courseYearMap.get(r.course_name ?? "")) === yearFilter
+    );
+  }, [rawRecords, yearFilter, courseYearMap]);
+
+  // Courses available within the year-filtered records (drives the course dropdown)
+  const coursesInYear = useMemo(() => {
+    const unique = new Set(yearFilteredRecords.map((r) => r.course_name).filter(Boolean) as string[]);
     return Array.from(unique).sort();
-  }, [rawRecords]);
+  }, [yearFilteredRecords]);
 
-  const summaries = useMemo(() => {
-    const filtered = courseFilter === "all"
-      ? rawRecords
-      : rawRecords.filter((r) => r.course_name === courseFilter);
-    return buildSummaries(filtered, userMap);
-  }, [rawRecords, userMap, courseFilter]);
+  // Step 2 — apply course filter on top of year-filtered records
+  const courseFilteredRecords = useMemo(() => {
+    if (courseFilter === "all") return yearFilteredRecords;
+    return yearFilteredRecords.filter((r) => r.course_name === courseFilter);
+  }, [yearFilteredRecords, courseFilter]);
 
+  // Build per-student summaries from the course-filtered records
+  const summaries = useMemo(
+    () => buildSummaries(courseFilteredRecords, userMap),
+    [courseFilteredRecords, userMap]
+  );
+
+  // Groups available within the current summaries (drives the group dropdown)
   const groups = useMemo(() => {
     const unique = new Set(summaries.map((s) => s.group).filter((g) => g !== "—"));
     return Array.from(unique).sort();
   }, [summaries]);
 
-  const filtered = useMemo(
-    () => groupFilter === "all" ? summaries : summaries.filter((s) => s.group === groupFilter),
-    [summaries, groupFilter]
-  );
+  // Step 3 & 4 — apply group and status filters
+  const filtered = useMemo(() => summaries.filter((s) => {
+    if (groupFilter !== "all" && s.group !== groupFilter) return false;
+    if (statusFilter === "good" && s.percentage < 75) return false;
+    if (statusFilter === "critical" && s.percentage >= 75) return false;
+    return true;
+  }), [summaries, groupFilter, statusFilter]);
 
   const avgPct = filtered.length
     ? Math.round(filtered.reduce((acc, s) => acc + s.percentage, 0) / filtered.length)
     : 0;
 
+  const handleYearChange = (year: string) => {
+    setYearFilter(year);
+    setCourseFilter("all");
+    setGroupFilter("all");
+  };
+
+  const handleCourseChange = (course: string) => {
+    setCourseFilter(course);
+    setGroupFilter("all");
+  };
+
   const columns: Column<StudentSummary>[] = [
     { header: "Student Name", accessor: "student_name" },
+    { header: "Course", accessor: "course_name" },
     { header: "Group", accessor: "group" },
     { header: "Sessions Attended", accessor: (row) => `${row.present} / ${row.total}` },
     { header: "Attendance %", accessor: (row) => `${row.percentage}%` },
@@ -175,31 +224,49 @@ export default function AttendanceRecords() {
           searchValue={(row) => row.student_name}
           filterComponent={
             <div className="flex gap-2">
-              {courses.length > 0 && (
-                <Select value={courseFilter} onValueChange={(v) => { setCourseFilter(v); setGroupFilter("all"); }}>
-                  <SelectTrigger className="w-44">
-                    <SelectValue placeholder="All courses" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {courses.map((c) => (
-                      <SelectItem key={c} value={c}>{c}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-              {groups.length > 0 && (
-                <Select value={groupFilter} onValueChange={setGroupFilter}>
-                  <SelectTrigger className="w-40">
-                    <SelectValue placeholder="All groups" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All groups</SelectItem>
-                    {groups.map((g) => (
-                      <SelectItem key={g} value={g}>{g}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
+              <Select value={yearFilter} onValueChange={handleYearChange}>
+                <SelectTrigger className="w-32">
+                  <SelectValue placeholder="All years" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Years</SelectItem>
+                  {years.map((y) => (
+                    <SelectItem key={y} value={String(y)}>Year {y}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={courseFilter} onValueChange={handleCourseChange}>
+                <SelectTrigger className="w-44">
+                  <SelectValue placeholder="All courses" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Courses</SelectItem>
+                  {coursesInYear.map((c) => (
+                    <SelectItem key={c} value={c}>{c}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={groupFilter} onValueChange={setGroupFilter}>
+                <SelectTrigger className="w-40">
+                  <SelectValue placeholder="All groups" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All groups</SelectItem>
+                  {groups.map((g) => (
+                    <SelectItem key={g} value={g}>{g}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="w-36">
+                  <SelectValue placeholder="All statuses" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Statuses</SelectItem>
+                  <SelectItem value="good">Good (≥75%)</SelectItem>
+                  <SelectItem value="critical">Critical (&lt;75%)</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           }
         />

@@ -1,7 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import { DataTable, Column } from "@/components/shared/DataTable";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Plus, Pencil, Trash2, FileSpreadsheet, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { UserFormModal } from "@/components/modals/UserFormModal";
@@ -46,9 +47,30 @@ export default function ManageUsers() {
   const [bulkUploadOpen, setBulkUploadOpen] = useState(false);
   const [bulkUploading, setBulkUploading] = useState(false);
   const [uploadErrors, setUploadErrors] = useState<string[]>([]);
-  const [roleFilter, setRoleFilter] = useState<string>("all");
+  const [roleFilter, setRoleFilter] = useState<string>("student");
+  const [yearFilter, setYearFilter] = useState<string>("all");
+  const [departmentFilter, setDepartmentFilter] = useState<string>("all");
+  const [groupFilter, setGroupFilter] = useState<string>("all");
 
-  const filteredUsers = roleFilter === "all" ? users : users.filter(user => user.role === roleFilter);
+  const years = [1, 2, 3, 4];
+  const departments = ["Software Engineering", "Cyber Security", "Computer Science", "Data Science", "Artificial Intelligence"];
+
+  const preGroupFiltered = useMemo(() => users.filter(u => {
+    if (roleFilter !== "all" && u.role !== roleFilter) return false;
+    if (yearFilter !== "all" && String(u.year) !== yearFilter) return false;
+    if (departmentFilter !== "all" && u.department !== departmentFilter) return false;
+    return true;
+  }), [users, roleFilter, yearFilter, departmentFilter]);
+
+  const groups = useMemo(() => {
+    const unique = new Set(preGroupFiltered.map(u => u.group).filter(Boolean) as string[]);
+    return Array.from(unique).sort();
+  }, [preGroupFiltered]);
+
+  const filteredUsers = useMemo(() => {
+    if (groupFilter === "all") return preGroupFiltered;
+    return preGroupFiltered.filter(u => u.group === groupFilter);
+  }, [preGroupFiltered, groupFilter]);
 
   // Load users on component mount
   useEffect(() => {
@@ -193,6 +215,20 @@ export default function ManageUsers() {
         </Badge>
       ),
     },
+    ...(roleFilter === "student" ? [
+      {
+        header: "Year",
+        accessor: (row: User) => row.year ? `Year ${row.year}` : "—",
+      },
+      {
+        header: "Department",
+        accessor: (row: User) => row.department || "—",
+      },
+      {
+        header: "Group",
+        accessor: (row: User) => row.group || "—",
+      },
+    ] : []),
     {
       header: "Actions",
       accessor: (row) => (
@@ -262,17 +298,75 @@ export default function ManageUsers() {
         columns={columns}
         searchPlaceholder="Search users..."
         filterComponent={
-          <Select value={roleFilter} onValueChange={setRoleFilter}>
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="Select role" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Roles</SelectItem>
-              <SelectItem value="admin">Admins</SelectItem>
-              <SelectItem value="teacher">Teachers</SelectItem>
-              <SelectItem value="student">Students</SelectItem>
-            </SelectContent>
-          </Select>
+          <div className="flex gap-2">
+            <Select
+              value={roleFilter}
+              onValueChange={(v) => {
+                setRoleFilter(v);
+                setYearFilter("all");
+                setDepartmentFilter("all");
+                setGroupFilter("all");
+              }}
+            >
+              <SelectTrigger className="w-36">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="admin">Admins</SelectItem>
+                <SelectItem value="teacher">Teachers</SelectItem>
+                <SelectItem value="student">Students</SelectItem>
+              </SelectContent>
+            </Select>
+            {roleFilter === "student" && (
+              <>
+                <Select
+                  value={yearFilter}
+                  onValueChange={(v) => {
+                    setYearFilter(v);
+                    if (v === "1" || v === "2") setDepartmentFilter("General");
+                    else setDepartmentFilter("all");
+                    setGroupFilter("all");
+                  }}
+                >
+                  <SelectTrigger className="w-32">
+                    <SelectValue placeholder="All years" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Years</SelectItem>
+                    {years.map(y => (
+                      <SelectItem key={y} value={String(y)}>Year {y}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {yearFilter === "1" || yearFilter === "2" ? (
+                  <Input value="General" className="w-44 rounded-lg" disabled />
+                ) : (
+                  <Select value={departmentFilter} onValueChange={(v) => { setDepartmentFilter(v); setGroupFilter("all"); }}>
+                    <SelectTrigger className="w-44">
+                      <SelectValue placeholder="All departments" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Departments</SelectItem>
+                      {departments.map(d => (
+                        <SelectItem key={d} value={d}>{d}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+                <Select value={groupFilter} onValueChange={setGroupFilter}>
+                  <SelectTrigger className="w-36">
+                    <SelectValue placeholder="All groups" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Groups</SelectItem>
+                    {groups.map(g => (
+                      <SelectItem key={g} value={g}>{g}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </>
+            )}
+          </div>
         }
       />
 

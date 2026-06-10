@@ -13,6 +13,7 @@ interface Student {
   id: number;
   name: string;
   email: string;
+  group?: string;
   status: "present" | "absent";
   attendance_id?: number;
   marked_at?: string;
@@ -35,7 +36,8 @@ export default function SessionDetails() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [selectedGroup, setSelectedGroup] = useState<string>("all");
+  const [groupFilter, setGroupFilter] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
 
   // Load session data on mount
   useEffect(() => {
@@ -107,13 +109,13 @@ export default function SessionDetails() {
     }
   };
 
-  // Get unique groups for filter
   const availableGroups = Array.from(new Set(students.map(s => s.group).filter(Boolean)));
 
-  // Filter students by selected group
-  const filteredStudents = selectedGroup === "all"
-    ? students
-    : students.filter(s => s.group === selectedGroup);
+  const filteredStudents = students.filter(s => {
+    if (groupFilter !== "all" && s.group !== groupFilter) return false;
+    if (statusFilter !== "all" && s.status !== statusFilter) return false;
+    return true;
+  });
 
   // Calculate stats based on filtered students
   const presentCount = filteredStudents.filter(s => s.status === "present").length;
@@ -346,22 +348,30 @@ export default function SessionDetails() {
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-semibold">Student List</h2>
           <div className="flex items-center gap-3">
-            {availableGroups.length > 0 && (
-              <div className="flex items-center gap-2">
-                <Filter className="w-4 h-4 text-muted-foreground" />
-                <Select value={selectedGroup} onValueChange={setSelectedGroup}>
-                  <SelectTrigger className="w-36">
-                    <SelectValue placeholder="All Groups" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Groups</SelectItem>
-                    {availableGroups.map(group => (
-                      <SelectItem key={group} value={group}>{group}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
+            <div className="flex items-center gap-2">
+              <Filter className="w-4 h-4 text-muted-foreground" />
+              <Select value={groupFilter} onValueChange={setGroupFilter}>
+                <SelectTrigger className="w-36">
+                  <SelectValue placeholder="All Groups" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Groups</SelectItem>
+                  {availableGroups.map(group => (
+                    <SelectItem key={group} value={group}>{group}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="w-36">
+                  <SelectValue placeholder="All Statuses" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Statuses</SelectItem>
+                  <SelectItem value="present">Present</SelectItem>
+                  <SelectItem value="absent">Absent</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             {session.status !== "submitted" && (
               <p className="text-sm text-muted-foreground">
                 Click on students to change their attendance status
