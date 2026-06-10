@@ -39,22 +39,13 @@ class AttendanceService {
       final response = await _dio.get(ApiConfig.studentAttendance.replaceFirst('{studentId}', userId.toString()));
 
       final data = response.data as Map<String, dynamic>;
-      final percentages = data['percentages'] as List;
 
-      int totalSessions = 0;
-      int attendedSessions = 0;
-
-      for (var p in percentages) {
-        // Assuming percentages are calculated as (present/total)*100
-        // But backend gives percentage, need to infer total and present
-        // For simplicity, let's sum the totals from history or assume
-        // Actually, backend doesn't give total per course, only percentage
-        // So, perhaps compute overall from history
-      }
-
+      // The backend returns per-course percentages but not raw session counts,
+      // so we derive overall totals from the flat history list instead.
       final history = data['history'] as List;
-      totalSessions = history.length;
-      attendedSessions = history.where((h) => h['status'] == 'present').length;
+      final int totalSessions = history.length;
+      final int attendedSessions =
+          history.where((h) => h['status'] == 'present').length;
 
       return AttendanceSummary(
         totalSessions: totalSessions,
@@ -97,20 +88,6 @@ class AttendanceService {
     } on DioException catch (e) {
       throw Exception('Failed to load attendance history: ${e.message}');
     }
-  }
-
-  /// Get attendance for a specific date range
-  Future<List<Session>> getAttendanceByDateRange(
-    DateTime startDate,
-    DateTime endDate,
-  ) async {
-    final allSessions = await getAttendanceHistory();
-
-    return allSessions.where((session) {
-      return session.dateTime != null &&
-             session.dateTime!.isAfter(startDate) &&
-             session.dateTime!.isBefore(endDate);
-    }).toList();
   }
 
   /// Get low-attendance warnings for the logged-in student.

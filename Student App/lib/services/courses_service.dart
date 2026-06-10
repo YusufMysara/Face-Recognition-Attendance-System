@@ -70,9 +70,8 @@ class CoursesService {
               course.teacherName = "Teacher"; // TODO: Fetch actual teacher name
             }
           }
-        } catch (e) {
-          // If attendance fetch fails, continue with courses without attendance
-          print('Failed to fetch attendance for courses: $e');
+        } catch (_) {
+          // Attendance fetch failed — continue with courses shown without percentages.
         }
       }
 
@@ -128,7 +127,6 @@ class CoursesService {
               status: sessions[i].status,
               startedAt: sessions[i].startedAt,
               endedAt: sessions[i].endedAt,
-              createdAt: sessions[i].createdAt,
               sessionName: 'Session ${i + 1}',
               attendanceStatus: sessions[i].attendanceStatus,
             );
@@ -141,9 +139,8 @@ class CoursesService {
               session.attendanceStatus = status == 'present' ? AttendanceStatus.present : AttendanceStatus.absent;
             }
           }
-        } catch (e) {
-          // If attendance fetch fails, continue with sessions without attendance
-          print('Failed to fetch attendance for sessions: $e');
+        } catch (_) {
+          // Attendance fetch failed — continue with sessions shown without status.
         }
       }
 

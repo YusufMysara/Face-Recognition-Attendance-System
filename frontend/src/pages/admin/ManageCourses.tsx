@@ -1,10 +1,12 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import { DataTable, Column } from "@/components/shared/DataTable";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Plus, Eye, Pencil, Trash2 } from "lucide-react";
 import { CourseFormModal } from "@/components/modals/CourseFormModal";
 import { ConfirmationModal } from "@/components/modals/ConfirmationModal";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { coursesApi, usersApi, handleApiError } from "@/lib/api";
@@ -15,6 +17,8 @@ interface Course {
   description: string;
   teacher_id?: number;
   teacher_name?: string;
+  year?: number;
+  department?: string;
 }
 
 interface Teacher {
@@ -31,6 +35,18 @@ export default function ManageCourses() {
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [yearFilter, setYearFilter] = useState<string>("all");
+  const [departmentFilter, setDepartmentFilter] = useState<string>("all");
+
+  const years = [1, 2, 3, 4];
+  const departments = ["Software Engineering", "Cyber Security", "Computer Science", "Data Science", "Artificial Intelligence"];
+
+  const filteredCourses = useMemo(() => courses.filter(c => {
+    if (yearFilter !== "all" && String(c.year) !== yearFilter) return false;
+    if (departmentFilter !== "all" && c.department !== departmentFilter) return false;
+    return true;
+  }), [courses, yearFilter, departmentFilter]);
 
   const [courseFormOpen, setCourseFormOpen] = useState(false);
   const [formMode, setFormMode] = useState<"create" | "edit">("create");
@@ -126,6 +142,8 @@ export default function ManageCourses() {
           name: data.name,
           description: data.description,
           teacher_id: data.teacher_id ? parseInt(data.teacher_id) : undefined,
+          year: data.year,
+          department: data.department,
         };
         const newCourse = await coursesApi.create(payload);
 
@@ -144,6 +162,8 @@ export default function ManageCourses() {
         if (data.name !== selectedCourse.name) payload.name = data.name;
         if (data.description !== selectedCourse.description) payload.description = data.description;
         if (parseInt(data.teacher_id) !== selectedCourse.teacher_id) payload.teacher_id = parseInt(data.teacher_id);
+        if (data.year !== selectedCourse.year) payload.year = data.year;
+        if (data.department !== selectedCourse.department) payload.department = data.department;
 
         if (Object.keys(payload).length > 0) {
           const updatedCourse = await coursesApi.update(selectedCourse.id, payload);
@@ -170,6 +190,14 @@ export default function ManageCourses() {
 
   const columns: Column<Course>[] = [
     { header: "Course Name", accessor: "name" },
+    {
+      header: "Year",
+      accessor: (row) => row.year ? `Year ${row.year}` : "—",
+    },
+    {
+      header: "Department",
+      accessor: (row) => row.department || "—",
+    },
     {
       header: "Teacher",
       accessor: (row) => row.teacher_name || "Not assigned"
@@ -233,7 +261,48 @@ export default function ManageCourses() {
         </Button>
       </div>
 
-      <DataTable data={courses} columns={columns} searchPlaceholder="Search courses..." />
+      <DataTable
+        data={filteredCourses}
+        columns={columns}
+        searchPlaceholder="Search courses..."
+        filterComponent={
+          <div className="flex gap-2">
+            <Select
+              value={yearFilter}
+              onValueChange={(v) => {
+                setYearFilter(v);
+                if (v === "1" || v === "2") setDepartmentFilter("General");
+                else setDepartmentFilter("all");
+              }}
+            >
+              <SelectTrigger className="w-32">
+                <SelectValue placeholder="All years" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Years</SelectItem>
+                {years.map(y => (
+                  <SelectItem key={y} value={String(y)}>Year {y}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {yearFilter === "1" || yearFilter === "2" ? (
+              <Input value="General" className="w-44 rounded-lg" disabled />
+            ) : (
+              <Select value={departmentFilter} onValueChange={setDepartmentFilter}>
+                <SelectTrigger className="w-44">
+                  <SelectValue placeholder="All departments" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Departments</SelectItem>
+                  {departments.map(d => (
+                    <SelectItem key={d} value={d}>{d}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
+        }
+      />
 
       <CourseFormModal
         open={courseFormOpen}

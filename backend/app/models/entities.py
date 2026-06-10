@@ -1,6 +1,4 @@
 from datetime import datetime
-from typing import Optional
-
 from sqlalchemy import (
     Column,
     DateTime,
@@ -24,6 +22,8 @@ class User(Base):
     email = Column(String, unique=True, nullable=False, index=True)
     password_hash = Column(String, nullable=False)
     role = Column(String, nullable=False)
+    year = Column(Integer, nullable=True)        # students only: 1–4
+    department = Column(String, nullable=True)   # students only: "General" | dept name
     group = Column(String, nullable=True)
     photo_path = Column(String, nullable=True)
     face_embedding = Column(Text, nullable=True)
@@ -39,6 +39,8 @@ class Course(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
     description = Column(Text, nullable=False)
+    year = Column(Integer, nullable=False)       # 1–4
+    department = Column(String, nullable=False)  # "General" | dept name
     teacher_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     teacher = relationship("User", back_populates="teaching_courses")
@@ -83,15 +85,11 @@ class Attendance(Base):
     session_id = Column(Integer, ForeignKey("sessions.id"), nullable=False)
     student_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     status = Column(
-        Enum("present", "absent", "late", "excused", name="attendance_status"),
+        Enum("present", "absent", name="attendance_status"),
         nullable=False,
     )
     timestamp = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     session = relationship("Session", back_populates="attendance_records")
     student = relationship("User")
-
-    @property
-    def student_name(self) -> Optional[str]:
-        return self.student.name if self.student else None
 

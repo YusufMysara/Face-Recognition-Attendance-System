@@ -1,32 +1,38 @@
-# Use official slim Python 3.10 image
 FROM python:3.10-slim
 
-# Install system dependencies needed by dlib / face_recognition
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    cmake \
-    libx11-6 \
+# Runtime libraries required by OpenCV (used by InsightFace).
+# curl is added for the docker-compose health check.
+RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
-    libglib2.0-dev \
+    libgl1 \
     libsm6 \
     libxrender1 \
     libxext6 \
-    libgl1 \
+    curl \
+    netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
 WORKDIR /app
 
-# Copy requirements first to leverage Docker cache
+# Install dependencies before copying source so this layer is cached.
 COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip \
+ && pip install --no-cache-dir -r requirements.txt
 
-# Upgrade pip and install Python dependencies
-RUN pip install --upgrade pip
-RUN pip install -r requirements.txt
+# Pre-download the InsightFace buffalo_s model so it's baked into the image.
+# Without this, InsightFace downloads ~125 MB from GitHub on every fresh
+# container start, blocking the warmup thread indefinitely.
+RUN python -c "\
+from insightface.app import FaceAnalysis; \
+app = FaceAnalysis(name='buffalo_s', providers=['CPUExecutionProvider']); \
+app.prepare(ctx_id=0, det_size=(640, 640))"
 
-# Copy the rest of your application code
-COPY . /app
+# Copy application source (see .dockerignore for exclusions).
+COPY . .
 
-# Start the FastAPI server
-# Uses Railway's $PORT environment variable, defaults to 8080 if not set
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}"]
+# Strip Windows carriage returns and make the entrypoint executable.
+RUN sed -i 's/\r//' docker-entrypoint.sh && chmod +x docker-entrypoint.sh
+
+# The entrypoint creates required dirs, initialises the DB, seeds the
+# super-admin, then execs uvicorn.
+ENTRYPOINT ["./docker-entrypoint.sh"]

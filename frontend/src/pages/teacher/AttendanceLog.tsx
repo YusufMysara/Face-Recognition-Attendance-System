@@ -1,89 +1,135 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { DataTable, Column } from "@/components/shared/DataTable";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Eye, Trash2, Loader2, Download } from "lucide-react";
-import { ConfirmationModal } from "@/components/modals/ConfirmationModal";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { StatsCard } from "@/components/shared/StatsCard";
+import { GraduationCap, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
-import { useNavigate } from "react-router-dom";
-import { coursesApi, sessionsApi, attendanceApi, handleApiError } from "@/lib/api";
+import { coursesApi, attendanceApi, handleApiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 
-interface Session {
+interface Course {
   id: number;
+  name: string;
+  teacher_id: number;
+  year?: number;
+}
+
+interface User {
+  id: number;
+  group?: string;
+}
+
+interface RawRecord {
+  student_id: number;
+  student_name?: string;
+  status: "present" | "absent";
   course_name: string;
-  started_at: string;
-  status: string;
-  attendance_count?: number;
-  total_students?: number;
+}
+
+interface StudentSummary {
+  student_id: number;
+  student_name: string;
+  group: string;
+  course_name: string;
+  present: number;
+  total: number;
+  percentage: number;
+}
+
+function statusBadge(pct: number) {
+  if (pct >= 75) return <Badge className="bg-green-100 text-green-800 hover:bg-green-100">Good</Badge>;
+  return <Badge className="bg-red-100 text-red-800 hover:bg-red-100">Critical</Badge>;
+}
+
+function buildSummaries(records: RawRecord[], userMap: Map<number, User>): StudentSummary[] {
+  const map = new Map<string, { student_id: number; name: string; course_name: string; present: number; total: number }>();
+  for (const r of records) {
+    const key = `${r.student_id}__${r.course_name}`;
+    if (!map.has(key)) {
+      map.set(key, { student_id: r.student_id, name: r.student_name || `Student ${r.student_id}`, course_name: r.course_name, present: 0, total: 0 });
+    }
+    const entry = map.get(key)!;
+    entry.total += 1;
+    if (r.status === "present") entry.present += 1;
+  }
+  return Array.from(map.values())
+    .map(({ student_id, name, course_name, present, total }) => ({
+      student_id,
+      student_name: name,
+      group: userMap.get(student_id)?.group || "—",
+      course_name,
+      present,
+      total,
+      percentage: total > 0 ? Math.round((present / total) * 100) : 0,
+    }))
+    .sort((a, b) => a.percentage - b.percentage);
+}
+
+async function fetchRecordsForCourse(course: Course): Promise<RawRecord[]> {
+  const sessions = await coursesApi.getCourseSessions(course.id);
+  const recordsPerSession = await Promise.all(
+    sessions.map((s: { id: number }) =>
+      attendanceApi.getSessionAttendance(s.id).catch(() => [])
+    )
+  );
+  return (recordsPerSession.flat() as Omit<RawRecord, "course_name">[]).map((r) => ({
+    ...r,
+    course_name: course.name,
+  }));
 }
 
 export default function AttendanceLog() {
-  const navigate = useNavigate();
   const { user } = useAuth();
 
-  const [sessions, setSessions] = useState<Session[]>([]);
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [rawRecords, setRawRecords] = useState<RawRecord[]>([]);
+  const [userMap, setUserMap] = useState<Map<number, User>>(new Map());
+  const [courseYearMap, setCourseYearMap] = useState<Map<string, number>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null);
-  const [deletingSession, setDeletingSession] = useState(false);
 
-  // Load sessions on mount
+  const [yearFilter, setYearFilter] = useState<string>("all");
+  const [courseFilter, setCourseFilter] = useState<string>("all");
+  const [groupFilter, setGroupFilter] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+
+  const years = [1, 2, 3, 4];
+
   useEffect(() => {
-    if (user) {
-      loadSessions();
-    }
+    if (user) loadInitial();
   }, [user]);
 
-  const loadSessions = async () => {
-    if (!user) return;
-
+  const loadInitial = async () => {
     try {
       setLoading(true);
       setError(null);
 
-      // Get all courses taught by this teacher
-      const coursesData = await coursesApi.list();
-      const teacherCourses = coursesData.filter(course => course.teacher_id === user.id);
+      const allCourses = await coursesApi.list();
+      const teacherCourses = (allCourses as Course[]).filter((c) => c.teacher_id === user!.id);
 
-      // Get all sessions for these courses and enrich with attendance data
-      const allSessions: Session[] = [];
+      const yearMap = new Map<string, number>();
+      for (const c of teacherCourses) {
+        if (c.name && c.year) yearMap.set(c.name, c.year);
+      }
 
-      for (const course of teacherCourses) {
-        const courseSessions = await coursesApi.getCourseSessions(course.id);
+      const [allRecordsPerCourse, allStudentsPerCourse] = await Promise.all([
+        Promise.all(teacherCourses.map((c) => fetchRecordsForCourse(c).catch(() => [] as RawRecord[]))),
+        Promise.all(teacherCourses.map((c) => coursesApi.getCourseStudents(c.id).catch(() => []))),
+      ]);
 
-        for (const session of courseSessions) {
-          try {
-            const attendanceData = await attendanceApi.getSessionAttendance(session.id);
-            const presentCount = attendanceData.filter(record => record.status === "present").length;
-
-            allSessions.push({
-              id: session.id,
-              course_name: course.name,
-              started_at: session.started_at,
-              status: session.status,
-              attendance_count: presentCount,
-              total_students: attendanceData.length
-            });
-          } catch (err) {
-            // If no attendance data, still show the session
-            allSessions.push({
-              id: session.id,
-              course_name: course.name,
-              started_at: session.started_at,
-              status: session.status,
-              attendance_count: 0,
-              total_students: 0
-            });
-          }
+      const map = new Map<number, User>();
+      for (const students of allStudentsPerCourse) {
+        for (const s of students as User[]) {
+          if (!map.has(s.id)) map.set(s.id, s);
         }
       }
 
-      // Sort by date (most recent first)
-      allSessions.sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
-
-      setSessions(allSessions);
+      setCourses(teacherCourses);
+      setRawRecords(allRecordsPerCourse.flat());
+      setUserMap(map);
+      setCourseYearMap(yearMap);
     } catch (err) {
       setError(handleApiError(err));
       toast.error(handleApiError(err));
@@ -92,82 +138,64 @@ export default function AttendanceLog() {
     }
   };
 
-  const handleViewSession = (sessionId: number) => {
-    navigate(`/teacher/session/${sessionId}`);
+  // Step 1 — year filter
+  const yearFilteredRecords = useMemo(() => {
+    if (yearFilter === "all") return rawRecords;
+    return rawRecords.filter((r) => String(courseYearMap.get(r.course_name)) === yearFilter);
+  }, [rawRecords, yearFilter, courseYearMap]);
+
+  // Courses available within the year-filtered records
+  const coursesInYear = useMemo(() => {
+    const unique = new Set(yearFilteredRecords.map((r) => r.course_name).filter(Boolean));
+    return Array.from(unique).sort();
+  }, [yearFilteredRecords]);
+
+  // Step 2 — course filter
+  const courseFilteredRecords = useMemo(() => {
+    if (courseFilter === "all") return yearFilteredRecords;
+    return yearFilteredRecords.filter((r) => r.course_name === courseFilter);
+  }, [yearFilteredRecords, courseFilter]);
+
+  const summaries = useMemo(
+    () => buildSummaries(courseFilteredRecords, userMap),
+    [courseFilteredRecords, userMap]
+  );
+
+  const groups = useMemo(() => {
+    const unique = new Set(summaries.map((s) => s.group).filter((g) => g !== "—"));
+    return Array.from(unique).sort();
+  }, [summaries]);
+
+  // Step 3 & 4 — group and status filters
+  const filtered = useMemo(() => summaries.filter((s) => {
+    if (groupFilter !== "all" && s.group !== groupFilter) return false;
+    if (statusFilter === "good" && s.percentage < 75) return false;
+    if (statusFilter === "critical" && s.percentage >= 75) return false;
+    return true;
+  }), [summaries, groupFilter, statusFilter]);
+
+  const avgPct = filtered.length
+    ? Math.round(filtered.reduce((acc, s) => acc + s.percentage, 0) / filtered.length)
+    : 0;
+
+  const handleYearChange = (year: string) => {
+    setYearFilter(year);
+    setCourseFilter("all");
+    setGroupFilter("all");
   };
 
-  const handleDeleteSession = async () => {
-    if (!selectedSessionId) return;
-
-    try {
-      setDeletingSession(true);
-      await sessionsApi.delete(selectedSessionId);
-      setSessions(sessions.filter(s => s.id !== selectedSessionId));
-      toast.success("Session deleted successfully");
-    } catch (err) {
-      toast.error(handleApiError(err));
-    } finally {
-      setDeletingSession(false);
-      setShowDeleteModal(false);
-      setSelectedSessionId(null);
-    }
+  const handleCourseChange = (course: string) => {
+    setCourseFilter(course);
+    setGroupFilter("all");
   };
 
-  const columns: Column<Session>[] = [
-    {
-      header: "Session ID",
-      accessor: (row) => `Session ${row.id}`
-    },
-    { header: "Course Name", accessor: "course_name" },
-    {
-      header: "Date",
-      accessor: (row) => new Date(row.started_at).toLocaleDateString()
-    },
-    {
-      header: "Time",
-      accessor: (row) => new Date(row.started_at).toLocaleTimeString()
-    },
-    {
-      header: "Status",
-      accessor: (row) => (
-        <Badge variant={row.status === "open" ? "default" : "secondary"}>
-          {row.status}
-        </Badge>
-      ),
-    },
-    {
-      header: "Attendance",
-      accessor: (row) =>
-        row.total_students ?
-          `${row.attendance_count || 0}/${row.total_students}` :
-          "No data"
-    },
-    {
-      header: "Actions",
-      accessor: (row) => (
-        <div className="flex gap-2">
-          <Button
-            size="sm"
-            variant="ghost"
-            title="View"
-            onClick={() => handleViewSession(row.id)}
-          >
-            <Eye className="w-4 h-4" />
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            title="Delete"
-            onClick={() => {
-              setSelectedSessionId(row.id);
-              setShowDeleteModal(true);
-            }}
-          >
-            <Trash2 className="w-4 h-4 text-destructive" />
-          </Button>
-        </div>
-      ),
-    },
+  const columns: Column<StudentSummary>[] = [
+    { header: "Student Name", accessor: "student_name" },
+    { header: "Course", accessor: "course_name" },
+    { header: "Group", accessor: "group" },
+    { header: "Sessions Attended", accessor: (row) => `${row.present} / ${row.total}` },
+    { header: "Attendance %", accessor: (row) => `${row.percentage}%` },
+    { header: "Status", accessor: (row) => statusBadge(row.percentage) },
   ];
 
   if (loading) {
@@ -176,7 +204,7 @@ export default function AttendanceLog() {
         <div className="flex items-center justify-center h-64">
           <div className="text-center">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
-            <p className="text-muted-foreground">Loading attendance sessions...</p>
+            <p className="text-muted-foreground">Loading attendance data...</p>
           </div>
         </div>
       </div>
@@ -189,10 +217,22 @@ export default function AttendanceLog() {
         <div className="flex items-center justify-center h-64">
           <div className="text-center">
             <p className="text-destructive mb-4">{error}</p>
-            <Button onClick={loadSessions} variant="outline">
-              Try Again
-            </Button>
+            <Button onClick={loadInitial} variant="outline">Try Again</Button>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (courses.length === 0) {
+    return (
+      <div className="content-container">
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold mb-2">Attendance Log</h1>
+          <p className="text-muted-foreground">Student attendance overview for your courses</p>
+        </div>
+        <div className="text-center py-12">
+          <p className="text-muted-foreground">You have no courses assigned</p>
         </div>
       </div>
     );
@@ -200,38 +240,75 @@ export default function AttendanceLog() {
 
   return (
     <div className="content-container">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-3xl font-bold mb-2">Attendance Log</h1>
-          <p className="text-muted-foreground">View all attendance sessions across all courses</p>
-        </div>
-        <Button className="rounded-xl" disabled>
-          <Download className="w-4 h-4 mr-2" />
-          Export Records (Coming Soon)
-        </Button>
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold mb-2">Attendance Log</h1>
+        <p className="text-muted-foreground">Student attendance overview for your courses</p>
       </div>
 
-      {sessions.length === 0 ? (
+      <div className="grid md:grid-cols-2 gap-6 mb-8">
+        <StatsCard title="Students Tracked" value={filtered.length.toString()} icon={GraduationCap} />
+        <StatsCard title="Average Attendance" value={`${avgPct}%`} icon={TrendingUp} />
+      </div>
+
+      {rawRecords.length === 0 ? (
         <div className="text-center py-12">
-          <p className="text-muted-foreground">No attendance sessions found</p>
+          <p className="text-muted-foreground">No attendance records for your courses yet</p>
         </div>
       ) : (
         <DataTable
-          data={sessions}
+          data={filtered}
           columns={columns}
-          searchPlaceholder="Search sessions..."
+          searchPlaceholder="Search by student name..."
+          searchValue={(row) => row.student_name}
+          filterComponent={
+            <div className="flex gap-2">
+              <Select value={yearFilter} onValueChange={handleYearChange}>
+                <SelectTrigger className="w-32">
+                  <SelectValue placeholder="All years" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Years</SelectItem>
+                  {years.map((y) => (
+                    <SelectItem key={y} value={String(y)}>Year {y}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={courseFilter} onValueChange={handleCourseChange}>
+                <SelectTrigger className="w-44">
+                  <SelectValue placeholder="All courses" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Courses</SelectItem>
+                  {coursesInYear.map((c) => (
+                    <SelectItem key={c} value={c}>{c}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={groupFilter} onValueChange={setGroupFilter}>
+                <SelectTrigger className="w-40">
+                  <SelectValue placeholder="All groups" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All groups</SelectItem>
+                  {groups.map((g) => (
+                    <SelectItem key={g} value={g}>{g}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="w-36">
+                  <SelectValue placeholder="All statuses" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Statuses</SelectItem>
+                  <SelectItem value="good">Good (≥75%)</SelectItem>
+                  <SelectItem value="critical">Critical (&lt;75%)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          }
         />
       )}
-
-      <ConfirmationModal
-        open={showDeleteModal}
-        onOpenChange={setShowDeleteModal}
-        title="Delete Session"
-        description="Are you sure you want to delete this session? This action cannot be undone."
-        confirmText={deletingSession ? "Deleting..." : "Delete"}
-        onConfirm={handleDeleteSession}
-        variant="destructive"
-      />
     </div>
   );
 }

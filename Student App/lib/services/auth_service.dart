@@ -14,7 +14,6 @@ class AuthService {
   );
 
   static const String _accessTokenKey = 'access_token';
-  static const String _refreshTokenKey = 'refresh_token';
   static const String _userKey = 'user_data';
 
   /// Login with email and password
@@ -32,10 +31,8 @@ class AuthService {
         throw Exception('Access denied. This app is for students only.');
       }
 
-      // Store tokens securely
-      await _saveTokens(authResponse.token.accessToken, ''); // No refresh token in backend
-
-      // Store user data
+      // Store token and user ID securely
+      await _secureStorage.write(key: _accessTokenKey, value: authResponse.token.accessToken);
       await _secureStorage.write(key: _userKey, value: authResponse.user.id.toString());
 
       return authResponse;
@@ -50,11 +47,10 @@ class AuthService {
     }
   }
 
-  /// Logout and clear stored tokens
+  /// Logout and clear stored data
   Future<void> logout() async {
-    // Backend doesn't have logout endpoint, just clear local storage
+    // Backend doesn't have a logout endpoint — just clear local storage.
     await _secureStorage.delete(key: _accessTokenKey);
-    await _secureStorage.delete(key: _refreshTokenKey);
     await _secureStorage.delete(key: _userKey);
   }
 
@@ -73,37 +69,5 @@ class AuthService {
   /// Get stored access token
   Future<String?> getAccessToken() async {
     return await _secureStorage.read(key: _accessTokenKey);
-  }
-
-  /// Get stored refresh token
-  Future<String?> getRefreshToken() async {
-    return await _secureStorage.read(key: _refreshTokenKey);
-  }
-
-  /// Refresh the access token
-  /// TODO: Replace mock with actual API call
-  Future<String?> refreshAccessToken() async {
-    final refreshToken = await getRefreshToken();
-    if (refreshToken == null) return null;
-
-    // Simulate network delay
-    await Future.delayed(const Duration(milliseconds: 500));
-
-    // TODO: Replace with actual API call
-    // final response = await _dio.post(
-    //   '${ApiConfig.baseUrl}${ApiConfig.refreshToken}',
-    //   data: {'refresh_token': refreshToken},
-    // );
-
-    final newAccessToken = 'refreshed_token_${DateTime.now().millisecondsSinceEpoch}';
-    await _secureStorage.write(key: _accessTokenKey, value: newAccessToken);
-    
-    return newAccessToken;
-  }
-
-  /// Save tokens securely
-  Future<void> _saveTokens(String accessToken, String refreshToken) async {
-    await _secureStorage.write(key: _accessTokenKey, value: accessToken);
-    await _secureStorage.write(key: _refreshTokenKey, value: refreshToken);
   }
 }

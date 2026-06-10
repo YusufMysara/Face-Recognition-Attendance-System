@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { BookOpen, Calendar, TrendingUp, Award, Loader2, Upload, Camera, Lock } from "lucide-react";
 import { StatsCard } from "@/components/shared/StatsCard";
-import { coursesApi, attendanceApi, usersApi, handleApiError } from "@/lib/api";
+import { attendanceApi, usersApi, handleApiError } from "@/lib/api";
 import { useAuth, AuthContextType } from "@/context/AuthContext";
 import { toast } from "sonner";
 
@@ -142,14 +142,21 @@ export default function StudentDashboard() {
       setLoading(true);
       setError(null);
 
-      // Load courses and attendance data in parallel
-      const [coursesData, attendanceResponse] = await Promise.all([
-        coursesApi.list(),
-        attendanceApi.getStudentAttendance(user.id)
-      ]);
-
-      setCourses(coursesData);
+      const attendanceResponse = await attendanceApi.getStudentAttendance(user.id);
       setAttendanceData(attendanceResponse);
+
+      // Derive enrolled courses from attendance history (avoids showing all system courses)
+      const courseMap = new Map<number, Course>();
+      for (const record of attendanceResponse.history as AttendanceRecord[]) {
+        if (!courseMap.has(record.course_id)) {
+          courseMap.set(record.course_id, {
+            id: record.course_id,
+            name: record.course_name,
+            description: "",
+          });
+        }
+      }
+      setCourses(Array.from(courseMap.values()));
     } catch (err) {
       setError(handleApiError(err));
       toast.error(handleApiError(err));
@@ -312,7 +319,7 @@ export default function StudentDashboard() {
                 type="password"
                 value={currentPassword}
                 onChange={(e) => setCurrentPassword(e.target.value)}
-                placeholder="Enter default123"
+                placeholder="Enter your current password"
                 className="mt-1"
                 disabled={changingPassword}
               />

@@ -1,8 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import { DataTable, Column } from "@/components/shared/DataTable";
 import { Button } from "@/components/ui/button";
-import { Plus, Pencil, Trash2, Upload, FileSpreadsheet, Loader2, X, Filter } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Plus, Pencil, Trash2, FileSpreadsheet, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { UserFormModal } from "@/components/modals/UserFormModal";
 import { ConfirmationModal } from "@/components/modals/ConfirmationModal";
@@ -25,6 +26,8 @@ interface User {
   email: string;
   role: string;
   group?: string;
+  year?: number;
+  department?: string;
   photo_path?: string;
 }
 
@@ -43,9 +46,31 @@ export default function ManageUsers() {
   const [formLoading, setFormLoading] = useState(false);
   const [bulkUploadOpen, setBulkUploadOpen] = useState(false);
   const [bulkUploading, setBulkUploading] = useState(false);
-  const [roleFilter, setRoleFilter] = useState<string>("all");
+  const [uploadErrors, setUploadErrors] = useState<string[]>([]);
+  const [roleFilter, setRoleFilter] = useState<string>("student");
+  const [yearFilter, setYearFilter] = useState<string>("all");
+  const [departmentFilter, setDepartmentFilter] = useState<string>("all");
+  const [groupFilter, setGroupFilter] = useState<string>("all");
 
-  const filteredUsers = roleFilter === "all" ? users : users.filter(user => user.role === roleFilter);
+  const years = [1, 2, 3, 4];
+  const departments = ["Software Engineering", "Cyber Security", "Computer Science", "Data Science", "Artificial Intelligence"];
+
+  const preGroupFiltered = useMemo(() => users.filter(u => {
+    if (roleFilter !== "all" && u.role !== roleFilter) return false;
+    if (yearFilter !== "all" && String(u.year) !== yearFilter) return false;
+    if (departmentFilter !== "all" && u.department !== departmentFilter) return false;
+    return true;
+  }), [users, roleFilter, yearFilter, departmentFilter]);
+
+  const groups = useMemo(() => {
+    const unique = new Set(preGroupFiltered.map(u => u.group).filter(Boolean) as string[]);
+    return Array.from(unique).sort();
+  }, [preGroupFiltered]);
+
+  const filteredUsers = useMemo(() => {
+    if (groupFilter === "all") return preGroupFiltered;
+    return preGroupFiltered.filter(u => u.group === groupFilter);
+  }, [preGroupFiltered, groupFilter]);
 
   // Load users on component mount
   useEffect(() => {
@@ -82,9 +107,8 @@ export default function ManageUsers() {
   };
 
   const handleBulkUploadClick = () => {
-    console.log("Bulk upload button clicked");
+    setUploadErrors([]);
     setBulkUploadOpen(true);
-    console.log("bulkUploadOpen set to:", true);
   };
 
   const handleEditUser = (user: User) => {
@@ -121,9 +145,12 @@ export default function ManageUsers() {
           name: data.name,
           email: data.email,
           role: data.role.toLowerCase(),
-          ...(data.role === "student" && { group: data.group }),
+          ...(data.role === "student" && {
+            group: data.group,
+            year: data.year,
+            department: data.department,
+          }),
         };
-        // Only include password if it's provided
         if (data.password) {
           payload.password = data.password;
         }
@@ -136,6 +163,8 @@ export default function ManageUsers() {
         if (data.email !== selectedUser.email) payload.email = data.email;
         if (data.group !== selectedUser.group) payload.group = data.group;
         if (data.role !== selectedUser.role) payload.role = data.role;
+        if (data.year !== selectedUser.year) payload.year = data.year;
+        if (data.department !== selectedUser.department) payload.department = data.department;
         if (data.password) payload.password = data.password;
 
         if (Object.keys(payload).length > 0) {
@@ -155,11 +184,19 @@ export default function ManageUsers() {
   const handleBulkUpload = async (file: File) => {
     try {
       setBulkUploading(true);
+      setUploadErrors([]);
       const result = await usersApi.bulkUpload(file);
-      toast.success(`Successfully uploaded ${result.created_count} users`);
-      // Reload users to show the new ones
-      loadUsers();
-      setBulkUploadOpen(false);
+
+      if (result.created_count > 0) {
+        toast.success(`Created ${result.created_count} user${result.created_count !== 1 ? "s" : ""} successfully`);
+        loadUsers();
+      }
+
+      if (result.errors?.length > 0) {
+        setUploadErrors(result.errors);
+      } else {
+        setBulkUploadOpen(false);
+      }
     } catch (err) {
       toast.error(handleApiError(err));
     } finally {
@@ -178,33 +215,34 @@ export default function ManageUsers() {
         </Badge>
       ),
     },
+    ...(roleFilter === "student" ? [
+      {
+        header: "Year",
+        accessor: (row: User) => row.year ? `Year ${row.year}` : "—",
+      },
+      {
+        header: "Department",
+        accessor: (row: User) => row.department || "—",
+      },
+      {
+        header: "Group",
+        accessor: (row: User) => row.group || "—",
+      },
+    ] : []),
     {
       header: "Actions",
-      accessor: (row) => {
-        const isSuperAdmin = row.email === "admin@example.com" || row.name === "Super Admin";
-        const isCurrentUserSuperAdmin = currentUser?.email === "admin@example.com" || currentUser?.name === "Super Admin";
-        const isEditingAdmin = row.role === "admin";
-        const isOwnAccount = row.id === currentUser?.id;
-
-        // Show delete button logic:
-        // - Super Admin: can delete anyone (except Super Admin, but that's handled by backend)
-        // - Regular admin: can delete students and teachers, but not other admins and not themselves
-        const canDelete = isCurrentUserSuperAdmin ||
-                          (!isEditingAdmin && !isOwnAccount && !isSuperAdmin);
-
-        return (
-          <div className="flex gap-2">
-            <Button size="sm" variant="ghost" onClick={() => handleEditUser(row)}>
-              <Pencil className="w-4 h-4" />
+      accessor: (row) => (
+        <div className="flex gap-2">
+          <Button size="sm" variant="ghost" onClick={() => handleEditUser(row)}>
+            <Pencil className="w-4 h-4" />
+          </Button>
+          {row.id !== currentUser?.id && (
+            <Button size="sm" variant="ghost" onClick={() => handleDeleteClick(row)}>
+              <Trash2 className="w-4 h-4 text-destructive" />
             </Button>
-            {canDelete && (
-              <Button size="sm" variant="ghost" onClick={() => handleDeleteClick(row)}>
-                <Trash2 className="w-4 h-4 text-destructive" />
-              </Button>
-            )}
-          </div>
-        );
-      },
+          )}
+        </div>
+      ),
     },
   ];
 
@@ -260,22 +298,80 @@ export default function ManageUsers() {
         columns={columns}
         searchPlaceholder="Search users..."
         filterComponent={
-          <Select value={roleFilter} onValueChange={setRoleFilter}>
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="Select role" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Roles</SelectItem>
-              <SelectItem value="admin">Admins</SelectItem>
-              <SelectItem value="teacher">Teachers</SelectItem>
-              <SelectItem value="student">Students</SelectItem>
-            </SelectContent>
-          </Select>
+          <div className="flex gap-2">
+            <Select
+              value={roleFilter}
+              onValueChange={(v) => {
+                setRoleFilter(v);
+                setYearFilter("all");
+                setDepartmentFilter("all");
+                setGroupFilter("all");
+              }}
+            >
+              <SelectTrigger className="w-36">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="admin">Admins</SelectItem>
+                <SelectItem value="teacher">Teachers</SelectItem>
+                <SelectItem value="student">Students</SelectItem>
+              </SelectContent>
+            </Select>
+            {roleFilter === "student" && (
+              <>
+                <Select
+                  value={yearFilter}
+                  onValueChange={(v) => {
+                    setYearFilter(v);
+                    if (v === "1" || v === "2") setDepartmentFilter("General");
+                    else setDepartmentFilter("all");
+                    setGroupFilter("all");
+                  }}
+                >
+                  <SelectTrigger className="w-32">
+                    <SelectValue placeholder="All years" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Years</SelectItem>
+                    {years.map(y => (
+                      <SelectItem key={y} value={String(y)}>Year {y}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {yearFilter === "1" || yearFilter === "2" ? (
+                  <Input value="General" className="w-44 rounded-lg" disabled />
+                ) : (
+                  <Select value={departmentFilter} onValueChange={(v) => { setDepartmentFilter(v); setGroupFilter("all"); }}>
+                    <SelectTrigger className="w-44">
+                      <SelectValue placeholder="All departments" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Departments</SelectItem>
+                      {departments.map(d => (
+                        <SelectItem key={d} value={d}>{d}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+                <Select value={groupFilter} onValueChange={setGroupFilter}>
+                  <SelectTrigger className="w-36">
+                    <SelectValue placeholder="All groups" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Groups</SelectItem>
+                    {groups.map(g => (
+                      <SelectItem key={g} value={g}>{g}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </>
+            )}
+          </div>
         }
       />
 
-      <Dialog open={bulkUploadOpen} onOpenChange={setBulkUploadOpen}>
-        <DialogContent className="sm:max-w-[425px]">
+      <Dialog open={bulkUploadOpen} onOpenChange={(open) => { if (!open) setUploadErrors([]); setBulkUploadOpen(open); }}>
+        <DialogContent className="sm:max-w-[480px]">
           <DialogHeader>
             <DialogTitle>Bulk Upload Users</DialogTitle>
             <DialogDescription>
@@ -283,14 +379,14 @@ export default function ManageUsers() {
               <br />
               <strong>Required columns:</strong> name, email, role
               <br />
-              <strong>Optional column:</strong> group (for students)
+              <strong>Student columns:</strong> year (1–4), department, group
               <br />
-              <strong>Note:</strong> Only Super Admin can create admin users via bulk upload.
+              <strong>Roles:</strong> admin, teacher, student
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid grid-cols-4 items-center gap-4">
-              <label htmlFor="excel-file" className="text-right">
+              <label htmlFor="excel-file" className="text-right text-sm font-medium">
                 Excel File
               </label>
               <input
@@ -300,17 +396,27 @@ export default function ManageUsers() {
                 className="col-span-3"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
-                  if (file) {
-                    handleBulkUpload(file);
-                  }
+                  if (file) handleBulkUpload(file);
                 }}
                 disabled={bulkUploading}
               />
             </div>
             {bulkUploading && (
-              <div className="flex items-center justify-center">
+              <div className="flex items-center justify-center text-sm text-muted-foreground">
                 <Loader2 className="w-4 h-4 animate-spin mr-2" />
                 Uploading and processing...
+              </div>
+            )}
+            {uploadErrors.length > 0 && (
+              <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3">
+                <p className="text-sm font-medium text-destructive mb-2">
+                  {uploadErrors.length} row{uploadErrors.length !== 1 ? "s" : ""} skipped:
+                </p>
+                <ul className="space-y-1 max-h-40 overflow-y-auto">
+                  {uploadErrors.map((err, i) => (
+                    <li key={i} className="text-xs text-destructive">{err}</li>
+                  ))}
+                </ul>
               </div>
             )}
           </div>
@@ -318,10 +424,10 @@ export default function ManageUsers() {
             <Button
               type="button"
               variant="outline"
-              onClick={() => setBulkUploadOpen(false)}
+              onClick={() => { setUploadErrors([]); setBulkUploadOpen(false); }}
               disabled={bulkUploading}
             >
-              Cancel
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>

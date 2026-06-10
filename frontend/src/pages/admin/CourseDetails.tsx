@@ -1,9 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { DataTable, Column } from "@/components/shared/DataTable";
 import { ArrowLeft, Plus, Trash2, Loader2 } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AddStudentsModal } from "@/components/modals/AddStudentsModal";
 import { ConfirmationModal } from "@/components/modals/ConfirmationModal";
 import { coursesApi, usersApi, handleApiError } from "@/lib/api";
@@ -22,6 +23,8 @@ interface Course {
   description: string;
   teacher_id?: number;
   teacher_name?: string;
+  year?: number;
+  department?: string;
 }
 
 export default function CourseDetails() {
@@ -38,6 +41,17 @@ export default function CourseDetails() {
   const [removeModalOpen, setRemoveModalOpen] = useState(false);
   const [studentToRemove, setStudentToRemove] = useState<Student | null>(null);
   const [assigningStudents, setAssigningStudents] = useState(false);
+  const [groupFilter, setGroupFilter] = useState<string>("all");
+
+  const groups = useMemo(() => {
+    const unique = new Set(enrolledStudents.map(s => s.group).filter(Boolean) as string[]);
+    return Array.from(unique).sort();
+  }, [enrolledStudents]);
+
+  const filteredEnrolled = useMemo(
+    () => groupFilter === "all" ? enrolledStudents : enrolledStudents.filter(s => s.group === groupFilter),
+    [enrolledStudents, groupFilter]
+  );
 
   // Load course and student data on mount
   useEffect(() => {
@@ -76,10 +90,15 @@ export default function CourseDetails() {
 
       setEnrolledStudents(enrolledData);
 
-      // Filter available students (students not enrolled in this course)
+      // Filter available students: same year/department as the course, not yet enrolled
       const enrolledIds = new Set(enrolledData.map(s => s.id));
       const available = allStudentsData
-        .filter(user => user.role === "student" && !enrolledIds.has(user.id))
+        .filter(user =>
+          user.role === "student" &&
+          !enrolledIds.has(user.id) &&
+          user.year === courseData.year &&
+          user.department === courseData.department
+        )
         .map(user => ({
           id: user.id,
           name: user.name,
@@ -120,19 +139,11 @@ export default function CourseDetails() {
 
   const handleAddStudents = async (studentIds: string[]) => {
     if (!courseId) return;
-
     try {
       setAssigningStudents(true);
       const courseIdNum = parseInt(courseId);
-
-      // Assign each student to the course
-      for (const studentId of studentIds) {
-        await coursesApi.assignStudent(courseIdNum, parseInt(studentId));
-      }
-
+      await Promise.all(studentIds.map(id => coursesApi.assignStudent(courseIdNum, parseInt(id))));
       toast.success(`${studentIds.length} student(s) added to course`);
-
-      // Refresh the data
       await loadCourseData();
       setAddStudentsOpen(false);
     } catch (err) {
@@ -220,23 +231,25 @@ export default function CourseDetails() {
 
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-2xl font-semibold">Enrolled Students</h2>
-        <Button
-          onClick={() => setAddStudentsOpen(true)}
-          className="rounded-xl"
-          disabled={assigningStudents}
-        >
-          {assigningStudents ? (
-            <>
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              Adding...
-            </>
-          ) : (
-            <>
-              <Plus className="w-4 h-4 mr-2" />
-              Add Students
-            </>
-          )}
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            onClick={() => setAddStudentsOpen(true)}
+            className="rounded-xl"
+            disabled={assigningStudents}
+          >
+            {assigningStudents ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Adding...
+              </>
+            ) : (
+              <>
+                <Plus className="w-4 h-4 mr-2" />
+                Add Students
+              </>
+            )}
+          </Button>
+        </div>
       </div>
 
       {enrolledStudents.length === 0 ? (
@@ -245,9 +258,22 @@ export default function CourseDetails() {
         </Card>
       ) : (
         <DataTable
-          data={enrolledStudents}
+          data={filteredEnrolled}
           columns={columns}
           searchPlaceholder="Search students..."
+          filterComponent={
+            <Select value={groupFilter} onValueChange={setGroupFilter}>
+              <SelectTrigger className="w-40">
+                <SelectValue placeholder="All groups" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All groups</SelectItem>
+                {groups.map(g => (
+                  <SelectItem key={g} value={g}>{g}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          }
         />
       )}
 

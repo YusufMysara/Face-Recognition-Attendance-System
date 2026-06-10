@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { coursesApi, sessionsApi, attendanceApi, usersApi, handleApiError } from "@/lib/api";
+import { coursesApi, sessionsApi, usersApi, handleApiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 
@@ -23,7 +23,7 @@ export default function TeacherDashboard() {
   const [stats, setStats] = useState({
     coursesTaught: 0,
     totalStudents: 0,
-    sessionsToday: 0,
+    totalSessions: 0,
   });
   const [recentSessions, setRecentSessions] = useState<RecentSession[]>([]);
   const [loading, setLoading] = useState(true);
@@ -47,77 +47,41 @@ export default function TeacherDashboard() {
       setLoading(true);
       setError(null);
 
-      // Load courses taught by this teacher
       const coursesData = await coursesApi.list();
       const teacherCourses = coursesData.filter(course => course.teacher_id === user.id);
 
-      // Calculate total students across all courses
-      let totalStudents = 0;
-      for (const course of teacherCourses) {
-        const courseStudents = await coursesApi.getCourseStudents(course.id);
-        totalStudents += courseStudents.length;
-      }
+      // Fetch student lists and session lists for all courses in parallel
+      const [studentLists, sessionLists] = await Promise.all([
+        Promise.all(teacherCourses.map(c => coursesApi.getCourseStudents(c.id).catch(() => []))),
+        Promise.all(teacherCourses.map(c => coursesApi.getCourseSessions(c.id).catch(() => []))),
+      ]);
 
-      // Get sessions for today (this would need a proper date filter, but for now we'll get recent sessions)
-      let sessionsToday = 0;
+      const totalStudents = studentLists.reduce((sum, list) => sum + list.length, 0);
+
+      let totalSessions = 0;
       const allSessions: RecentSession[] = [];
 
-      for (const course of teacherCourses) {
-        const courseSessions = await coursesApi.getCourseSessions(course.id);
+      for (let i = 0; i < teacherCourses.length; i++) {
+        const sessions = sessionLists[i] as any[];
+        totalSessions += sessions.length;
 
-        // Filter sessions from today (simplified - in real implementation, you'd check actual dates)
-        const todaySessions = courseSessions.filter(session => {
-          const sessionDate = new Date(session.started_at);
-          const today = new Date();
-          return sessionDate.toDateString() === today.toDateString();
-        });
-        sessionsToday += todaySessions.length;
-
-        // Get recent sessions with attendance data
-        const recentSessionsForCourse = courseSessions
+        sessions
           .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())
-          .slice(0, 3);
-
-        // Create a map to track session numbers per course
-        const courseSessionNumbers = new Map();
-
-        for (const session of recentSessionsForCourse) {
-          try {
-            const attendance = await attendanceApi.getSessionAttendance(session.id);
-            const presentCount = attendance.filter(record => record.status === "present").length;
-            const totalCount = attendance.length;
-            const percentage = totalCount > 0 ? Math.round((presentCount / totalCount) * 100) : 0;
-
-            // Get session number for this course
-            const currentNumber = courseSessionNumbers.get(course.id) || 0;
-            const sessionNumber = currentNumber + 1;
-            courseSessionNumbers.set(course.id, sessionNumber);
-
+          .slice(0, 3)
+          .forEach(session => {
+            const total: number = session.total_students ?? 0;
+            const present: number = session.attendance_count ?? 0;
             allSessions.push({
               id: session.id,
-              course_name: course.name,
-              session_name: `Session ${sessionNumber}`,
-              attendance_percentage: percentage
+              course_name: teacherCourses[i].name,
+              session_name: new Date(session.started_at).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+              attendance_percentage: total > 0 ? Math.round((present / total) * 100) : 0,
             });
-          } catch (err) {
-            // If no attendance data, skip this session
-            continue;
-          }
-        }
+          });
       }
 
-      // Sort by session ID (descending) and take the 5 most recent sessions
-      const sortedSessions = allSessions
-        .sort((a, b) => b.id - a.id)
-        .slice(0, 5);
-
-      setStats({
-        coursesTaught: teacherCourses.length,
-        totalStudents,
-        sessionsToday,
-      });
-      setRecentSessions(sortedSessions);
-
+      setStats({ coursesTaught: teacherCourses.length, totalStudents, totalSessions });
+      setRecentSessions(allSessions.sort((a, b) => b.id - a.id).slice(0, 5));
     } catch (err) {
       setError(handleApiError(err));
       toast.error(handleApiError(err));
@@ -168,7 +132,7 @@ export default function TeacherDashboard() {
   const displayStats = [
     { title: "Courses Taught", value: stats.coursesTaught.toString(), icon: BookOpen },
     { title: "Total Students", value: stats.totalStudents.toString(), icon: Users },
-    { title: "Sessions Today", value: stats.sessionsToday.toString(), icon: Calendar },
+    { title: "Total Sessions", value: stats.totalSessions.toString(), icon: Calendar },
   ];
 
   if (loading) {
@@ -229,7 +193,7 @@ export default function TeacherDashboard() {
                 type="password"
                 value={currentPassword}
                 onChange={(e) => setCurrentPassword(e.target.value)}
-                placeholder="Enter default123"
+                placeholder="Enter your current password"
                 className="mt-1"
                 disabled={changingPassword}
               />

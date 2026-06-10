@@ -16,6 +16,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _obscurePassword = true;
+  String? _errorMessage;
 
   @override
   void dispose() {
@@ -27,13 +28,20 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   Future<void> _handleLogin() async {
     if (!_formKey.currentState!.validate()) return;
 
-    final success = await ref.read(authStateProvider.notifier).login(
-          _emailController.text.trim(),
-          _passwordController.text,
-        );
+    setState(() => _errorMessage = null);
 
-    if (success && mounted) {
-      Navigator.of(context).pushReplacementNamed(AppRoutes.main);
+    try {
+      await ref.read(authStateProvider.notifier).login(
+            _emailController.text.trim(),
+            _passwordController.text,
+          );
+      if (mounted) {
+        Navigator.of(context).pushReplacementNamed(AppRoutes.main);
+      }
+    } catch (e) {
+      setState(() {
+        _errorMessage = e.toString().replaceFirst('Exception: ', '');
+      });
     }
   }
 
@@ -84,8 +92,8 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                 ),
                 const SizedBox(height: 48),
 
-                // Error message
-                if (authState.error != null) ...[
+                // Error message (local widget state — not stored in global auth state)
+                if (_errorMessage != null) ...[
                   Container(
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
@@ -105,7 +113,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            authState.error!,
+                            _errorMessage!,
                             style: TextStyle(
                               color: AppTheme.errorColor,
                               fontSize: 14,
@@ -167,8 +175,8 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                     if (value == null || value.isEmpty) {
                       return 'Please enter your password';
                     }
-                    if (value.length < 6) {
-                      return 'Password must be at least 6 characters';
+                    if (value.length < 8) {
+                      return 'Password must be at least 8 characters';
                     }
                     return null;
                   },

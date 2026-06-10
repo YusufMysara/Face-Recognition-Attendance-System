@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { StatsCard } from "@/components/shared/StatsCard";
-import { GraduationCap, UserCog, BookOpen, Calendar, TrendingUp, Loader2, Lock } from "lucide-react";
+import { GraduationCap, UserCog, BookOpen, Loader2, Lock } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -182,7 +182,7 @@ export default function AdminDashboard() {
                 type="password"
                 value={currentPassword}
                 onChange={(e) => setCurrentPassword(e.target.value)}
-                placeholder="Enter default123"
+                placeholder="Enter your current password"
                 className="mt-1"
                 disabled={changingPassword}
               />
@@ -242,16 +242,7 @@ export default function AdminDashboard() {
         ))}
       </div>
 
-      <div className="grid lg:grid-cols-2 gap-6">
-        <Card className="p-6 rounded-xl shadow-md">
-          <h2 className="text-xl font-semibold mb-4">Recent Activities</h2>
-          <div className="space-y-4">
-            <div className="text-center text-muted-foreground py-8">
-              <p>Coming Soon</p>
-            </div>
-          </div>
-        </Card>
-
+      <div className="grid lg:grid-cols-1 gap-6">
         <Card className="p-6 rounded-xl shadow-md">
           <h2 className="text-xl font-semibold mb-4">Quick Actions</h2>
           <div className="space-y-3">

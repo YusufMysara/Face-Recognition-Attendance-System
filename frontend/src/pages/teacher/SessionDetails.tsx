@@ -4,7 +4,8 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Calendar, Users, CheckCircle2, XCircle, Loader2, RotateCcw, Play, Filter } from "lucide-react";
+import { Calendar, Users, CheckCircle2, XCircle, Loader2, RotateCcw, Play, Filter, ArrowLeft } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { attendanceApi, coursesApi, sessionsApi, handleApiError } from "@/lib/api";
 import { toast } from "sonner";
 
@@ -12,6 +13,7 @@ interface Student {
   id: number;
   name: string;
   email: string;
+  group?: string;
   status: "present" | "absent";
   attendance_id?: number;
   marked_at?: string;
@@ -34,7 +36,8 @@ export default function SessionDetails() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [selectedGroup, setSelectedGroup] = useState<string>("all");
+  const [groupFilter, setGroupFilter] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
 
   // Load session data on mount
   useEffect(() => {
@@ -106,13 +109,13 @@ export default function SessionDetails() {
     }
   };
 
-  // Get unique groups for filter
   const availableGroups = Array.from(new Set(students.map(s => s.group).filter(Boolean)));
 
-  // Filter students by selected group
-  const filteredStudents = selectedGroup === "all"
-    ? students
-    : students.filter(s => s.group === selectedGroup);
+  const filteredStudents = students.filter(s => {
+    if (groupFilter !== "all" && s.group !== groupFilter) return false;
+    if (statusFilter !== "all" && s.status !== statusFilter) return false;
+    return true;
+  });
 
   // Calculate stats based on filtered students
   const presentCount = filteredStudents.filter(s => s.status === "present").length;
@@ -241,9 +244,14 @@ export default function SessionDetails() {
 
   return (
     <div className="content-container">
-      <div className="mb-6">
-        <h1 className="text-3xl font-bold mb-2">Session Details</h1>
-        <p className="text-muted-foreground">View attendance for this session</p>
+      <div className="flex items-center gap-4 mb-6">
+        <Button variant="ghost" size="icon" onClick={() => navigate(`/teacher/course/${session.course_id}`)}>
+          <ArrowLeft className="w-5 h-5" />
+        </Button>
+        <div>
+          <h1 className="text-3xl font-bold mb-2">Session Details</h1>
+          <p className="text-muted-foreground">View attendance for this session</p>
+        </div>
       </div>
 
       <div className="grid md:grid-cols-3 gap-6 mb-6">
@@ -340,21 +348,30 @@ export default function SessionDetails() {
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-semibold">Student List</h2>
           <div className="flex items-center gap-3">
-            {availableGroups.length > 0 && (
-              <div className="flex items-center gap-2">
-                <Filter className="w-4 h-4 text-muted-foreground" />
-                <select
-                  value={selectedGroup}
-                  onChange={(e) => setSelectedGroup(e.target.value)}
-                  className="px-3 py-1 border border-input rounded-md bg-background text-sm"
-                >
-                  <option value="all">All Groups</option>
+            <div className="flex items-center gap-2">
+              <Filter className="w-4 h-4 text-muted-foreground" />
+              <Select value={groupFilter} onValueChange={setGroupFilter}>
+                <SelectTrigger className="w-36">
+                  <SelectValue placeholder="All Groups" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Groups</SelectItem>
                   {availableGroups.map(group => (
-                    <option key={group} value={group}>{group}</option>
+                    <SelectItem key={group} value={group}>{group}</SelectItem>
                   ))}
-                </select>
-              </div>
-            )}
+                </SelectContent>
+              </Select>
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="w-36">
+                  <SelectValue placeholder="All Statuses" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Statuses</SelectItem>
+                  <SelectItem value="present">Present</SelectItem>
+                  <SelectItem value="absent">Absent</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             {session.status !== "submitted" && (
               <p className="text-sm text-muted-foreground">
                 Click on students to change their attendance status

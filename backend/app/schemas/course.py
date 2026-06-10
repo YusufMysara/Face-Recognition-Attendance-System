@@ -6,6 +6,8 @@ from pydantic import BaseModel, ConfigDict
 class CourseBase(BaseModel):
     name: str
     description: str
+    year: int
+    department: str
     teacher_id: Optional[int] = None
 
 
@@ -14,8 +16,11 @@ class CourseCreate(CourseBase):
 
 
 class CourseUpdate(BaseModel):
+    """Partial-patch schema — every field is optional, no inheritance from CourseBase."""
     name: Optional[str] = None
     description: Optional[str] = None
+    year: Optional[int] = None
+    department: Optional[str] = None
     teacher_id: Optional[int] = None
 
 
@@ -33,4 +38,3 @@ class CourseAssignment(BaseModel):
 class TeacherAssignment(BaseModel):
     teacher_id: int
     course_id: int
-

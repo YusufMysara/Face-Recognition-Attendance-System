@@ -1,7 +1,8 @@
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Upload, Image as ImageIcon, X, Loader2 } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   Select,
   SelectContent,
@@ -18,12 +19,18 @@ interface Student {
   name: string;
   email: string;
   group?: string;
+  year?: number;
+  department?: string;
+  photo_path?: string;
 }
 
 interface PhotoFile {
   file: File;
   preview: string;
 }
+
+const years = [1, 2, 3, 4];
+const departments = ["Software Engineering", "Cyber Security", "Computer Science", "Data Science", "Artificial Intelligence"];
 
 export default function UploadPhotos() {
   const [selectedStudent, setSelectedStudent] = useState<string>("");
@@ -33,7 +40,11 @@ export default function UploadPhotos() {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Load students on component mount
+  const [statusFilter, setStatusFilter] = useState<string>("needs-photo");
+  const [yearFilter, setYearFilter] = useState<string>("all");
+  const [departmentFilter, setDepartmentFilter] = useState<string>("all");
+  const [groupFilter, setGroupFilter] = useState<string>("all");
+
   useEffect(() => {
     loadStudents();
   }, []);
@@ -43,14 +54,48 @@ export default function UploadPhotos() {
       setLoading(true);
       setError(null);
       const response = await usersApi.list();
-      // Filter to only show students
-      const studentsOnly = response.filter(user => user.role === "student");
+      const studentsOnly = response
+        .filter(user => user.role === "student")
+        .sort((a, b) => (a.photo_path ? 1 : -1) - (b.photo_path ? 1 : -1));
       setStudents(studentsOnly);
     } catch (err) {
       setError(handleApiError(err));
     } finally {
       setLoading(false);
     }
+  };
+
+  // Step 1–3: status → year → department filtered list (drives group dropdown)
+  const preGroupFiltered = useMemo(() => students.filter(s => {
+    if (statusFilter === "needs-photo" && s.photo_path) return false;
+    if (statusFilter === "has-photo" && !s.photo_path) return false;
+    if (yearFilter !== "all" && String(s.year) !== yearFilter) return false;
+    if (departmentFilter !== "all" && s.department !== departmentFilter) return false;
+    return true;
+  }), [students, statusFilter, yearFilter, departmentFilter]);
+
+  const groups = useMemo(() => {
+    const unique = new Set(preGroupFiltered.map(s => s.group).filter(Boolean) as string[]);
+    return Array.from(unique).sort();
+  }, [preGroupFiltered]);
+
+  // Step 4: apply group filter
+  const filteredStudents = useMemo(() => {
+    if (groupFilter === "all") return preGroupFiltered;
+    return preGroupFiltered.filter(s => s.group === groupFilter);
+  }, [preGroupFiltered, groupFilter]);
+
+  const handleYearChange = (year: string) => {
+    setYearFilter(year);
+    setDepartmentFilter(year === "1" || year === "2" ? "General" : "all");
+    setGroupFilter("all");
+    setSelectedStudent("");
+  };
+
+  const handleDepartmentChange = (dept: string) => {
+    setDepartmentFilter(dept);
+    setGroupFilter("all");
+    setSelectedStudent("");
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -62,7 +107,7 @@ export default function UploadPhotos() {
     const files = e.target.files;
     if (files && files[0]) {
       const file = files[0];
-      const maxSize = 10 * 1024 * 1024; // 10MB
+      const maxSize = 10 * 1024 * 1024;
 
       if (!file.type.startsWith('image/')) {
         toast.error(`${file.name} is not an image file`);
@@ -74,26 +119,15 @@ export default function UploadPhotos() {
         return;
       }
 
-      // Clean up previous photo preview URL if exists
-      if (photo) {
-        URL.revokeObjectURL(photo.preview);
-      }
+      if (photo) URL.revokeObjectURL(photo.preview);
 
-      const newPhoto: PhotoFile = {
-        file,
-        preview: URL.createObjectURL(file)
-      };
-
-      setPhoto(newPhoto);
+      setPhoto({ file, preview: URL.createObjectURL(file) });
       toast.success("Photo selected successfully");
     }
   };
 
   const removePhoto = () => {
-    // Clean up the preview URL to prevent memory leaks
-    if (photo) {
-      URL.revokeObjectURL(photo.preview);
-    }
+    if (photo) URL.revokeObjectURL(photo.preview);
     setPhoto(null);
   };
 
@@ -109,19 +143,12 @@ export default function UploadPhotos() {
 
     try {
       setUploading(true);
-      const studentId = parseInt(selectedStudent);
-
-      // Upload the photo
-      await usersApi.uploadPhoto(studentId, photo.file);
-
+      await usersApi.uploadPhoto(parseInt(selectedStudent), photo.file);
       toast.success("Photo uploaded successfully and face embedding calculated");
-
-      // Clean up preview URL
       URL.revokeObjectURL(photo.preview);
-
-      // Reset form
       setPhoto(null);
       setSelectedStudent("");
+      await loadStudents();
     } catch (err) {
       toast.error(handleApiError(err));
     } finally {
@@ -129,12 +156,9 @@ export default function UploadPhotos() {
     }
   };
 
-  // Clean up preview URL when component unmounts
   useEffect(() => {
     return () => {
-      if (photo) {
-        URL.revokeObjectURL(photo.preview);
-      }
+      if (photo) URL.revokeObjectURL(photo.preview);
     };
   }, [photo]);
 
@@ -157,9 +181,7 @@ export default function UploadPhotos() {
         <div className="flex items-center justify-center h-64">
           <div className="text-center">
             <p className="text-destructive mb-4">{error}</p>
-            <Button onClick={loadStudents} variant="outline">
-              Try Again
-            </Button>
+            <Button onClick={loadStudents} variant="outline">Try Again</Button>
           </div>
         </div>
       </div>
@@ -174,6 +196,59 @@ export default function UploadPhotos() {
       </div>
 
       <Card className="p-6 rounded-xl shadow-md mb-6">
+        <div className="flex flex-wrap gap-2 mb-4">
+          <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setSelectedStudent(""); }}>
+            <SelectTrigger className="w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Students</SelectItem>
+              <SelectItem value="needs-photo">Needs Photo</SelectItem>
+              <SelectItem value="has-photo">Has Photo</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Select value={yearFilter} onValueChange={handleYearChange}>
+            <SelectTrigger className="w-32">
+              <SelectValue placeholder="All Years" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Years</SelectItem>
+              {years.map(y => (
+                <SelectItem key={y} value={String(y)}>Year {y}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {yearFilter === "1" || yearFilter === "2" ? (
+            <Input value="General" className="w-44 rounded-lg" disabled />
+          ) : (
+            <Select value={departmentFilter} onValueChange={handleDepartmentChange}>
+              <SelectTrigger className="w-52">
+                <SelectValue placeholder="All Departments" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Departments</SelectItem>
+                {departments.map(d => (
+                  <SelectItem key={d} value={d}>{d}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+
+          <Select value={groupFilter} onValueChange={(v) => { setGroupFilter(v); setSelectedStudent(""); }}>
+            <SelectTrigger className="w-36">
+              <SelectValue placeholder="All Groups" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Groups</SelectItem>
+              {groups.map(g => (
+                <SelectItem key={g} value={g}>{g}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
         <div className="space-y-2">
           <Label>Select Student</Label>
           <Select value={selectedStudent} onValueChange={setSelectedStudent} disabled={uploading}>
@@ -181,13 +256,24 @@ export default function UploadPhotos() {
               <SelectValue placeholder="Choose a student" />
             </SelectTrigger>
             <SelectContent>
-              {students.map((student) => (
+              {filteredStudents.map((student) => (
                 <SelectItem key={student.id} value={String(student.id)}>
-                  {student.name} ({student.email}) - Group {student.group || 'N/A'}
+                  <span className="flex items-center gap-2">
+                    <span className={student.photo_path ? "text-muted-foreground" : ""}>
+                      {student.name} — Group {student.group || "N/A"}
+                    </span>
+                    {student.photo_path
+                      ? <span className="text-xs text-green-600 font-medium">✓ has photo</span>
+                      : <span className="text-xs text-amber-600 font-medium">no photo</span>
+                    }
+                  </span>
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
+          <p className="text-xs text-muted-foreground">
+            {filteredStudents.filter(s => !s.photo_path).length} of {filteredStudents.length} shown still need a photo
+          </p>
         </div>
       </Card>
 
@@ -214,13 +300,9 @@ export default function UploadPhotos() {
             >
               <Upload className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
               <h3 className="text-lg font-semibold mb-2">
-                {selectedStudent
-                  ? "Drop photo here or click to browse"
-                  : "Select a student first"}
+                {selectedStudent ? "Drop photo here or click to browse" : "Select a student first"}
               </h3>
-              <p className="text-sm text-muted-foreground">
-                Supports: JPG, PNG, JPEG (Max 10MB)
-              </p>
+              <p className="text-sm text-muted-foreground">Supports: JPG, PNG, JPEG (Max 10MB)</p>
             </label>
           </div>
 
@@ -262,7 +344,7 @@ export default function UploadPhotos() {
                   className="max-w-full max-h-96 object-contain rounded-lg"
                 />
                 <button
-                  onClick={() => removePhoto()}
+                  onClick={removePhoto}
                   disabled={uploading}
                   className="absolute top-2 right-2 bg-destructive text-destructive-foreground rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-50"
                 >

@@ -1,22 +1,35 @@
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.security import OAuth2PasswordRequestForm
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import User
+from app.limiter import limiter
+from app.repositories.user_repository import UserRepository
 from app.schemas.auth import LoginRequest, LoginResponse, Token
-from app.schemas.auth import UserInfo
-from app.utils.security import create_access_token, verify_password
+from app.schemas.user import UserResponse
+from app.utils.security import create_access_token, verify_and_update_password
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/login", response_model=LoginResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == payload.email).first()
-    if not user or not verify_password(payload.password, user.password_hash):
+@limiter.limit("10/minute")
+def login(request: Request, payload: LoginRequest, db: Session = Depends(get_db)):
+    user = UserRepository(db).get_by_email(payload.email)
+    if not user:
         raise HTTPException(status_code=400, detail="Invalid credentials")
 
-    token = create_access_token({"sub": user.id, "role": user.role})
-    return LoginResponse(user=UserInfo.from_orm(user), token=Token(access_token=token))
+    valid, new_hash = verify_and_update_password(payload.password, user.password_hash)
+    if not valid:
+        raise HTTPException(status_code=400, detail="Invalid credentials")
 
+    # Silently upgrade the stored hash if passlib produced a cheaper one
+    # (e.g. old round-12 hashes become round-8 after the first successful login).
+    if new_hash:
+        user.password_hash = new_hash
+        db.commit()
+
+    token = create_access_token({"sub": user.id, "role": user.role})
+    return LoginResponse(
+        user=UserResponse.model_validate(user),
+        token=Token(access_token=token),
+    )

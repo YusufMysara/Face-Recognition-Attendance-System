@@ -4,7 +4,8 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { CheckCircle2, XCircle, Loader2, RotateCcw } from "lucide-react";
+import { CheckCircle2, XCircle, Loader2, RotateCcw, Filter } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { attendanceApi, coursesApi, sessionsApi, handleApiError } from "@/lib/api";
 
@@ -12,6 +13,7 @@ interface StudentAttendance {
   id: number;
   name: string;
   email: string;
+  group?: string;
   attendance_id?: number;
   status: "present" | "absent";
   marked_at?: string;
@@ -32,6 +34,8 @@ export default function SessionReview() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [groupFilter, setGroupFilter] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
 
   // Load session data and course information
   useEffect(() => {
@@ -77,6 +81,7 @@ export default function SessionReview() {
           id: student.id,
           name: student.name,
           email: student.email,
+          group: student.group,
           attendance_id: attendanceRecord?.id,
           status: attendanceRecord ? attendanceRecord.status : "absent",
           marked_at: attendanceRecord?.timestamp
@@ -185,6 +190,14 @@ export default function SessionReview() {
     );
   }
 
+  const availableGroups = Array.from(new Set(students.map(s => s.group).filter(Boolean))) as string[];
+
+  const filteredStudents = students.filter(s => {
+    if (groupFilter !== "all" && s.group !== groupFilter) return false;
+    if (statusFilter !== "all" && s.status !== statusFilter) return false;
+    return true;
+  });
+
   const presentCount = students.filter(s => s.status === "present").length;
   const totalCount = students.length;
 
@@ -238,13 +251,40 @@ export default function SessionReview() {
         </div>
       </Card>
 
+      {students.length > 0 && (
+        <div className="flex items-center gap-2 mb-4">
+          <Filter className="w-4 h-4 text-muted-foreground" />
+          <Select value={groupFilter} onValueChange={setGroupFilter}>
+            <SelectTrigger className="w-36">
+              <SelectValue placeholder="All Groups" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Groups</SelectItem>
+              {availableGroups.map(g => (
+                <SelectItem key={g} value={g}>{g}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="w-36">
+              <SelectValue placeholder="All Statuses" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Statuses</SelectItem>
+              <SelectItem value="present">Present</SelectItem>
+              <SelectItem value="absent">Absent</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+
       {students.length === 0 ? (
         <Card className="p-8 rounded-xl shadow-md text-center">
           <p className="text-muted-foreground">No attendance records found for this session.</p>
         </Card>
       ) : (
         <div className="grid md:grid-cols-2 gap-4">
-          {students.map((student) => (
+          {filteredStudents.map((student) => (
             <Card
               key={student.id}
               className="p-4 rounded-xl shadow-md cursor-pointer hover:shadow-lg transition-shadow"

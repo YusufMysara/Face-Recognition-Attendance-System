@@ -1,0 +1,68 @@
+services:
+
+  # ── PostgreSQL database ───────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: attendance
+      POSTGRES_USER: attendance
+      POSTGRES_PASSWORD: attendance
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U attendance -d attendance"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ── Backend (FastAPI + InsightFace) ─────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+    environment:
+      # Change this before deploying to production.
+      JWT_SECRET: dev-secret-change-in-production-32chars
+      DATABASE_URL: postgresql://attendance:attendance@db:5432/attendance
+      # Uploaded face photos stored in a named volume.
+      UPLOAD_DIR: /app/uploads
+      # Allow requests only from the nginx frontend container.
+      CORS_ALLOWED_ORIGINS: http://localhost
+      PORT: "8000"
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      # /ready returns 200 as soon as uvicorn is up (InsightFace warms up in
+      # the background — the frontend's login/dashboard work immediately).
+      test: ["CMD", "curl", "-f", "http://localhost:8000/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    # Uncomment to expose the API directly on the host for debugging:
+    # ports:
+    #   - "8000:8000"
+
+  # ── Frontend (React + Vite, served by nginx) ─────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Empty string → relative URLs → nginx proxies them to the backend.
+        VITE_API_BASE_URL: ""
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+# ── Named volumes ─────────────────────────────────────────────────────────────
+volumes:
+  postgres_data:   # PostgreSQL data directory
+  uploads:         # Uploaded face photos / embeddings

@@ -18,6 +18,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+const DEPARTMENTS_YEAR_3_4 = [
+  "Software Engineering",
+  "Cyber Security",
+  "Computer Science",
+  "Data Science",
+  "Artificial Intelligence",
+];
+
 interface CourseFormModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -27,6 +35,8 @@ interface CourseFormModalProps {
     name: string;
     description: string;
     teacher_id?: number;
+    year?: number;
+    department?: string;
   };
   teachers: { id: string; name: string }[];
   onSubmit: (data: any) => void;
@@ -45,6 +55,20 @@ export function CourseFormModal({
   const [name, setName] = useState(course?.name || "");
   const [description, setDescription] = useState(course?.description || "");
   const [teacherId, setTeacherId] = useState(course?.teacher_id ? String(course.teacher_id) : "");
+  const [year, setYear] = useState<string>(course?.year ? String(course.year) : "");
+  const [department, setDepartment] = useState(course?.department || "");
+
+  const yearNum = parseInt(year);
+  const isLowYear = yearNum === 1 || yearNum === 2;
+
+  // Auto-lock department to "General" for years 1 and 2
+  useEffect(() => {
+    if (isLowYear) {
+      setDepartment("General");
+    } else if (yearNum === 3 || yearNum === 4) {
+      setDepartment((prev) => (prev === "General" ? "" : prev));
+    }
+  }, [year]);
 
   // Reset form when modal opens or course changes
   useEffect(() => {
@@ -52,6 +76,8 @@ export function CourseFormModal({
       setName(course?.name || "");
       setDescription(course?.description || "");
       setTeacherId(course?.teacher_id ? String(course.teacher_id) : "");
+      setYear(course?.year ? String(course.year) : "");
+      setDepartment(course?.department || "");
     }
   }, [open, course]);
 
@@ -61,6 +87,8 @@ export function CourseFormModal({
       name,
       description,
       teacher_id: teacherId,
+      year: yearNum,
+      department,
     });
   };
 
@@ -96,6 +124,39 @@ export function CourseFormModal({
               rows={3}
               disabled={loading}
             />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Year</Label>
+            <Select value={year} onValueChange={setYear} disabled={loading}>
+              <SelectTrigger className="rounded-lg">
+                <SelectValue placeholder="Select year" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="1">Year 1</SelectItem>
+                <SelectItem value="2">Year 2</SelectItem>
+                <SelectItem value="3">Year 3</SelectItem>
+                <SelectItem value="4">Year 4</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Department</Label>
+            {isLowYear ? (
+              <Input value="General" className="rounded-lg" disabled />
+            ) : (
+              <Select value={department} onValueChange={setDepartment} disabled={loading || !year}>
+                <SelectTrigger className="rounded-lg">
+                  <SelectValue placeholder={year ? "Select department" : "Select year first"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {DEPARTMENTS_YEAR_3_4.map((dept) => (
+                    <SelectItem key={dept} value={dept}>{dept}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </div>
 
           <div className="space-y-2">

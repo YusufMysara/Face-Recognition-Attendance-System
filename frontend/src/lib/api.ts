@@ -1,11 +1,6 @@
 // API utility functions for backend communication
 const BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
-interface ApiResponse<T> {
-  data?: T;
-  error?: string;
-}
-
 // Helper function to get auth token
 const getToken = (): string | null => {
   return localStorage.getItem("token");
@@ -87,9 +82,11 @@ export const usersApi = {
   create: async (payload: {
     name: string;
     email: string;
-    password: string;
+    password?: string;
     role: string;
     group?: string;
+    year?: number;
+    department?: string;
   }) => {
     const response = await fetchWithAuth("/admin/users", {
       method: "POST",
@@ -107,6 +104,8 @@ export const usersApi = {
     email?: string;
     role?: string;
     group?: string;
+    year?: number;
+    department?: string;
     password?: string;
   }) => {
     const response = await fetchWithAuth(`/admin/users/${userId}`, {
@@ -244,6 +243,8 @@ export const coursesApi = {
     name: string;
     description: string;
     teacher_id?: number;
+    year?: number;
+    department?: string;
   }) => {
     const response = await fetchWithAuth("/courses", {
       method: "POST",
@@ -260,6 +261,8 @@ export const coursesApi = {
     name?: string;
     description?: string;
     teacher_id?: number;
+    year?: number;
+    department?: string;
   }) => {
     const response = await fetchWithAuth(`/courses/${courseId}`, {
       method: "PUT",
@@ -395,27 +398,25 @@ export const sessionsApi = {
     }
     return response.json();
   },
-
-  getCourseSessions: async (courseId: number) => {
-    const response = await fetchWithAuth(`/sessions/course/${courseId}`);
-    if (!response.ok) throw new Error("Failed to fetch sessions");
-    return response.json();
-  },
 };
 
 // Attendance API
 export const attendanceApi = {
-  mark: async (sessionId: number, file: Blob | File) => {
+  /**
+   * Hybrid mode: client detects faces via SCRFD and sends one cropped face
+   * image per detection. Backend only runs ArcFace recognition on each crop.
+   * Response: { recognized: [{ face_index, student_id, student_name, score }] }
+   */
+  markCrops: async (sessionId: number, crops: Blob[], kps: number[][][]) => {
     const formData = new FormData();
     formData.append("session_id", String(sessionId));
-    formData.append("file", file);
+    crops.forEach((crop, i) => formData.append("files", crop, `face_${i}.jpg`));
+    formData.append("keypoints", JSON.stringify(kps));
 
     const token = getToken();
-    const response = await fetch(`${BASE_URL}/attendance/mark`, {
+    const response = await fetch(`${BASE_URL}/attendance/mark-crops`, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+      headers: { Authorization: `Bearer ${token}` },
       body: formData,
     });
 
@@ -485,7 +486,7 @@ export const attendanceApi = {
   },
 
   getAll: async () => {
-    const response = await fetchWithAuth("/attendance/all");
+    const response = await fetchWithAuth("/attendance/all?limit=10000");
     if (!response.ok) throw new Error("Failed to fetch all attendance records");
     return response.json();
   },
@@ -503,6 +504,20 @@ export const notificationsApi = {
     const response = await fetchWithAuth("/attendance/notifications");
     if (!response.ok) throw new Error("Failed to fetch notifications");
     return response.json();
+  },
+};
+
+// System readiness API
+export const systemApi = {
+  isReady: async (): Promise<boolean> => {
+    try {
+      const response = await fetch(`${BASE_URL}/ready`);
+      if (!response.ok) return false;
+      const data = await response.json();
+      return data.ready === true;
+    } catch {
+      return false;
+    }
   },
 };
 

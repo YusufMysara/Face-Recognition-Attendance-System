@@ -1,8 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { DataTable, Column } from "@/components/shared/DataTable";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Loader2 } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { attendanceApi, handleApiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
@@ -22,17 +22,15 @@ export default function AttendanceHistory() {
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [courseFilter, setCourseFilter] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
 
-  // Load attendance history on mount
   useEffect(() => {
-    if (user) {
-      loadAttendanceHistory();
-    }
+    if (user) loadAttendanceHistory();
   }, [user]);
 
   const loadAttendanceHistory = async () => {
     if (!user) return;
-
     try {
       setLoading(true);
       setError(null);
@@ -46,22 +44,36 @@ export default function AttendanceHistory() {
     }
   };
 
+  const courses = useMemo(() => {
+    const unique = new Set(records.map((r) => r.course_name).filter(Boolean) as string[]);
+    return Array.from(unique).sort();
+  }, [records]);
+
+  const filtered = useMemo(() => {
+    return records.filter((r) => {
+      const matchCourse = courseFilter === "all" || r.course_name === courseFilter;
+      const matchStatus = statusFilter === "all" || r.status === statusFilter;
+      return matchCourse && matchStatus;
+    });
+  }, [records, courseFilter, statusFilter]);
+
   const columns: Column<AttendanceRecord>[] = [
     {
       header: "Course",
-      accessor: (row) => row.course_name || `Course ${row.course_id}`
+      accessor: (row) => row.course_name || `Course ${row.course_id}`,
     },
     {
       header: "Session",
-      accessor: (row) => row.session_name || 'Session'
+      accessor: (row) => row.session_name || "—",
     },
     {
       header: "Date",
-      accessor: (row) => new Date(row.timestamp).toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric'
-      })
+      accessor: (row) =>
+        new Date(row.timestamp).toLocaleDateString("en-US", {
+          year: "numeric",
+          month: "short",
+          day: "numeric",
+        }),
     },
     {
       header: "Status",
@@ -113,7 +125,37 @@ export default function AttendanceHistory() {
           <p className="text-muted-foreground">No attendance records found</p>
         </div>
       ) : (
-        <DataTable data={records} columns={columns} searchPlaceholder="Search history..." />
+        <DataTable
+          data={filtered}
+          columns={columns}
+          searchPlaceholder="Search by course..."
+          searchValue={(row) => row.course_name || ""}
+          filterComponent={
+            <div className="flex gap-2">
+              <Select value={courseFilter} onValueChange={setCourseFilter}>
+                <SelectTrigger className="w-44">
+                  <SelectValue placeholder="All courses" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All courses</SelectItem>
+                  {courses.map((c) => (
+                    <SelectItem key={c} value={c}>{c}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="w-36">
+                  <SelectValue placeholder="All statuses" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All statuses</SelectItem>
+                  <SelectItem value="present">Present</SelectItem>
+                  <SelectItem value="absent">Absent</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          }
+        />
       )}
     </div>
   );

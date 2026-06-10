@@ -8,12 +8,26 @@ from fastapi import HTTPException
 
 from app.config import get_settings
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# rounds=8 → ~25 ms per hash (default 12 → ~350 ms).
+# Existing hashes store their own cost factor inside the hash string, so
+# already-stored passwords still verify correctly — only new passwords use 8.
+# Stale hashes are transparently re-hashed to 8 rounds on next successful login.
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=8)
 settings = get_settings()
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
+
+
+def verify_and_update_password(plain_password: str, hashed_password: str):
+    """Verify a password and return (is_valid, new_hash_or_None).
+
+    If the stored hash was produced with an older / more expensive cost factor,
+    passlib returns a freshly-computed hash using the current rounds (8).
+    The caller should persist new_hash when it is not None.
+    """
+    return pwd_context.verify_and_update(plain_password, hashed_password)
 
 
 def get_password_hash(password: str) -> str:
@@ -44,8 +58,8 @@ def validate_password_strength(password: str) -> None:
     - At least one digit
     - At least one special character
     """
-    if len(password) < 6:
-        raise HTTPException(status_code=400, detail="Password must be at least 6 characters long")
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters long")
 
     if not re.search(r'[A-Z]', password):
         raise HTTPException(status_code=400, detail="Password must contain at least one uppercase letter")
